@@ -122,6 +122,7 @@ struct
 
   let clear t =
     IO.clear t.block;
+    IO.sync t.block;
     Index.clear t.index;
     Dict.clear t.dict
 
@@ -170,8 +171,9 @@ struct
 
     type index = Index.t
 
-    let clear t =
+    let unsafe_clear t =
       clear t.pack;
+      ignore (Lru.clear t.lru);
       Tbl.clear t.staging
 
     (* we need another cache here, as we want to share the LRU and
@@ -198,14 +200,14 @@ struct
       try
         let t = Hashtbl.find roots (root, readonly) in
         if valid t then (
-          if fresh then clear t;
+          if fresh then unsafe_clear t;
           t )
         else (
           Hashtbl.remove roots (root, readonly);
           raise Not_found )
       with Not_found ->
         let t = unsafe_v_no_cache ~fresh ~readonly ~lru_size ~index root in
-        if fresh then clear t;
+        if fresh then unsafe_clear t;
         Hashtbl.add roots (root, readonly) t;
         t
 
@@ -351,6 +353,11 @@ struct
     let close t =
       Lwt_mutex.with_lock t.pack.lock (fun () ->
           unsafe_close t;
+          Lwt.return_unit)
+
+    let clear t =
+      Lwt_mutex.with_lock t.pack.lock (fun () ->
+          unsafe_clear t;
           Lwt.return_unit)
   end
 end

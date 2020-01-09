@@ -814,6 +814,8 @@ module Make
 
   let mem_lower = Inode.mem_lower
 
+  let clear = Inode.clear
+
   let lift t v =
     let v = Inode.Val.of_bin v in
     let find = unsafe_find t in

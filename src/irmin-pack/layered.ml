@@ -207,6 +207,8 @@ module Content_addressable
   let upper t = t.upper
 
   let lower t = t.lower
+
+  let clear t = U.clear t.upper >>= fun () -> L.clear t.lower
 end
 
 module type LAYERED_MAKER = sig
@@ -323,4 +325,6 @@ end = struct
                 A.set t.lower branch hash
             | false -> Lwt.return_unit ))
       branches
+
+  let clear t = U.clear t.upper >>= fun () -> A.clear t.lower
 end

@@ -824,4 +824,6 @@ struct
   let integrity_check = Inode.integrity_check
 
   let close = Inode.close
+
+  let clear = Inode.clear
 end

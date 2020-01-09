@@ -250,6 +250,11 @@ struct
         | 1 -> upper_root1 t.config
         | 2 -> lower_root t.config
         | _ -> failwith "unexpected layer id"
+
+      let clear_upper t =
+        Contents.CA.U.clear t.ucontents >>= fun () ->
+        Node.CA.U.clear t.unode >>= fun () ->
+        Commit.CA.U.clear t.ucommit >>= fun () -> Branch.U.clear t.ubranch
     end
   end
 
@@ -403,7 +408,7 @@ struct
   let freeze ?(min : commit list = []) ?(max : commit list = [])
       ?(squash = false) t =
     copy t ~squash ~min ~max () >>= function
-    | Ok () -> Lwt.return_unit
+    | Ok () -> X.Repo.clear_upper t
     | Error (`Msg e) -> Fmt.kstrf Lwt.fail_with "[gc_store]: import error %s" e
 
   let layer_id t = X.Repo.layer_id t

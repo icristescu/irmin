@@ -73,10 +73,11 @@ module Make (IO : IO.S) : S = struct
     in
     (aux [@tailcall]) (Hashtbl.length t.cache) 0
 
+  (* TODO: to fix *)
   let sync_offset t =
     let former_log_offset = IO.offset t.io in
     let log_offset = IO.force_offset t.io in
-    if log_offset > former_log_offset then refill ~from:former_log_offset t
+    if log_offset <> former_log_offset then refill ~from:former_log_offset t
 
   let sync t = IO.sync t.io
 
