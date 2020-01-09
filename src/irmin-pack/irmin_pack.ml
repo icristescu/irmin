@@ -200,6 +200,12 @@ module Atomic_write (K : Irmin.Type.S) (V : Irmin.Hash.S) = struct
     Tbl.clear t.cache;
     Tbl.clear t.index
 
+  let clear t =
+    Log.debug (fun l -> l "[branches] clear");
+    Lwt_mutex.with_lock t.lock (fun () ->
+        unsafe_clear t;
+        Lwt.return_unit)
+
   let create = Lwt_mutex.create ()
 
   let watches = W.v ()
@@ -448,6 +454,12 @@ struct
         Contents.CA.close (contents_t t) >>= fun () ->
         Node.CA.close (snd (node_t t)) >>= fun () ->
         Commit.CA.close (snd (commit_t t)) >>= fun () -> Branch.close t.branch
+
+      let clear t =
+        Index.clear t.index;
+        Contents.CA.clear (contents_t t) >>= fun () ->
+        Node.CA.clear (snd (node_t t)) >>= fun () ->
+        Commit.CA.clear (snd (commit_t t)) >>= fun () -> Branch.clear t.branch
     end
   end
 
