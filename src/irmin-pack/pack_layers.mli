@@ -47,3 +47,32 @@ module Make_ext
       reporting. [`Fixed] and [`Corrupted] report the number of fixed/corrupted
       entries. *)
 end
+
+module Make
+    (Config : CONFIG)
+    (M : Irmin.Metadata.S)
+    (C : Irmin.Contents.S)
+    (P : Irmin.Path.S)
+    (B : Irmin.Branch.S)
+    (H : Irmin.Hash.S) : sig
+  include
+    Irmin_layers.S
+      with type key = P.t
+       and type step = P.step
+       and type metadata = M.t
+       and type contents = C.t
+       and type branch = B.t
+       and type hash = H.t
+
+  val integrity_check :
+    ?ppf:Format.formatter ->
+    auto_repair:bool ->
+    repo ->
+    ( [> `Fixed of int | `No_error ],
+      [> `Cannot_fix of string | `Corrupted of int ] )
+    result
+  (** Checks the integrity of the repository. if [auto_repair] is [true], will
+      also try to fix the issues. [ppf] is a formatter for progressive
+      reporting. [`Fixed] and [`Corrupted] report the number of fixed/corrupted
+      entries. *)
+end

@@ -413,3 +413,16 @@ struct
 
   let layer_id t = X.Repo.layer_id t
 end
+
+module Make
+    (Config : CONFIG)
+    (M : Irmin.Metadata.S)
+    (C : Irmin.Contents.S)
+    (P : Irmin.Path.S)
+    (B : Irmin.Branch.S)
+    (H : Irmin.Hash.S) =
+struct
+  module XNode = Irmin.Private.Node.Make (H) (P) (M)
+  module XCommit = Irmin.Private.Commit.Make (H)
+  include Make_ext (Config) (M) (C) (P) (B) (H) (XNode) (XCommit)
+end

@@ -109,4 +109,14 @@ module Atomic_write (K : Irmin.Type.S) (V : Irmin.Hash.S) : sig
 end
 
 module Stats = Stats
-module Make_layered = Pack_layers.Make_ext
+
+val config_layers :
+  ?conf:Irmin.config ->
+  ?lower_root:string ->
+  ?upper_root1:string ->
+  ?upper_root0:string ->
+  unit ->
+  Irmin.config
+
+module Make_ext_layered = Pack_layers.Make_ext
+module Make_layered = Pack_layers.Make
