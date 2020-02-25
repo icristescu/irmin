@@ -56,7 +56,9 @@ module Make (IO : IO.S) : S = struct
     IO.append t.io buf
 
   let refill ~from t =
-    let len = Int64.to_int (IO.offset t.io -- from) in
+    let len = Int64.to_int (IO.force_offset t.io -- from) in
+    Log.debug (fun l ->
+        l "[dict] refill %d len=%d" (Hashtbl.length t.cache) len);
     let raw = Bytes.create len in
     let n = IO.read t.io ~off:from raw in
     assert (n = len);
