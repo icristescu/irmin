@@ -26,3 +26,9 @@
  (name      common)
  (modules   common)
  (libraries irmin-test irmin-pack))
+
+
+(executable
+ (name      concurrent)
+ (modules   concurrent)
+ (libraries irmin-pack alcotest alcotest-lwt fmt logs logs.fmt common))
