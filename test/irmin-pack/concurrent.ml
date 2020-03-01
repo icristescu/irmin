@@ -79,10 +79,12 @@ let wait pid =
   | Unix.WSIGNALED s ->
       Alcotest.failf "Child %d died unexpectedly signaled by %d" pid s
 
-let worker c1 =
+let worker () =
   Log.debug (fun l -> l "worker started");
   S.Repo.v (config ~readonly:true ~fresh:false root) >>= fun ro ->
-  (S.Commit.of_hash ro (S.Commit.hash c1) >>= function
+  S.master ro >>= fun t ->
+  S.Head.get t >>= fun c ->
+  (S.Commit.of_hash ro (S.Commit.hash c) >>= function
    | None -> Alcotest.fail "no hash found in repo"
    | Some commit ->
        let tree = S.Commit.tree commit in
@@ -91,15 +93,15 @@ let worker c1 =
   >>= fun () -> S.Repo.close ro
 
 let test _switch () =
-  S.Repo.v (config ~readonly:false root) >>= fun rw ->
-  S.Tree.add S.Tree.empty [ "a"; "b" ] "Novembre" >>= fun tree ->
-  S.Commit.v rw ~info:(info ()) ~parents:[] tree >>= fun c1 ->
-  ( match Lwt_unix.fork () with
-  | 0 -> worker c1 >|= fun () -> exit 0
+  match Lwt_unix.fork () with
+  | 0 -> worker () >|= fun () -> exit 0
   | pid ->
+      S.Repo.v (config ~readonly:false root) >>= fun rw ->
+      S.master rw >>= fun t ->
+      S.Tree.add S.Tree.empty [ "a"; "b" ] "Novembre" >>= fun tree ->
+      S.set_tree_exn ~parents:[] ~info t [] tree >>= fun () ->
       Log.debug (fun l -> l "parent %d waits for worker %d" parent_pid pid);
-      wait pid )
-  >>= fun () -> S.Repo.close rw
+      wait pid >>= fun () -> S.Repo.close rw
 
 let () =
   if Unix.getpid () = parent_pid then (
