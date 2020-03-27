@@ -89,7 +89,6 @@ module Make (IO : IO.S) : S = struct
   let sync t = IO.sync t.io
 
   let index t v =
-    Log.debug (fun l -> l "[dict] index %S" v);
     if IO.readonly t.io then sync_offset t;
     try Some (Hashtbl.find t.cache v)
     with Not_found ->
@@ -104,7 +103,6 @@ module Make (IO : IO.S) : S = struct
 
   let find t id =
     if IO.readonly t.io then sync_offset t;
-    Log.debug (fun l -> l "[dict] find %d" id);
     let v = try Some (Hashtbl.find t.index id) with Not_found -> None in
     v
 
