@@ -146,11 +146,12 @@ module Atomic_write (K : Irmin.Type.S) (V : Irmin.Hash.S) = struct
     in
     aux from
 
-  (* TODO: to fix *)
   let sync_offset t =
-    let former_log_offset = IO.offset t.block in
-    let log_offset = IO.force_offset t.block in
-    if log_offset <> former_log_offset then refill t ~from:former_log_offset
+    if IO.force_refill t.block then refill t ~from:0L
+    else
+      let former_log_offset = IO.offset t.block in
+      let log_offset = IO.force_offset t.block in
+      if log_offset > former_log_offset then refill t ~from:former_log_offset
 
   let unsafe_find t k =
     Log.debug (fun l -> l "[branches] find %a" pp_branch k);
