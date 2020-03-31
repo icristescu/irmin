@@ -76,7 +76,13 @@ module Make (IO : IO.S) : S = struct
   let sync_offset t =
     let former_log_offset = IO.offset t.io in
     let log_offset = IO.force_offset t.io in
-    if log_offset > former_log_offset then refill ~from:former_log_offset t
+    (* force_refill means that RW was cleared, so we have to refill the
+       hashtables entirely *)
+    if IO.force_refill t.io then (
+      Hashtbl.clear t.cache;
+      Hashtbl.clear t.index;
+      refill ~from:0L t )
+    else if log_offset > former_log_offset then refill ~from:former_log_offset t
 
   let sync t = IO.sync t.io
 
