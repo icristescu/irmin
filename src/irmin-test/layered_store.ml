@@ -765,22 +765,23 @@ module Make_Layered (S : LAYERED_STORE) = struct
 
   module Hook = S.PrivateLayer.Hook
 
-  let after_copy f = Hook.v (function `After_Copy -> f | _ -> Lwt.return_unit)
+  let after_copy f =
+    Hook.v (function `After_Copy -> f () | _ -> Lwt.return_unit)
 
   let after_postcopy f =
-    Hook.v (function `After_PostCopy -> f | _ -> Lwt.return_unit)
+    Hook.v (function `After_PostCopy -> f () | _ -> Lwt.return_unit)
 
   let after f =
     Hook.v (function
-      | `After_PostCopy | `After_Copy -> f
+      | `After_PostCopy | `After_Copy -> f ()
       | _ -> Lwt.return_unit)
 
-  let before f = Hook.v (function `Before -> f | _ -> Lwt.return_unit)
+  let before f = Hook.v (function `Before -> f () | _ -> Lwt.return_unit)
 
   let test_find_during_freeze x () =
     let info = info "hooks" in
     let test repo =
-      let find_commit c v =
+      let find_commit c v () =
         S.Commit.of_hash repo (S.Commit.hash c) >>= function
         | None -> Alcotest.fail "no hash found in repo"
         | Some commit ->
@@ -794,7 +795,7 @@ module Make_Layered (S : LAYERED_STORE) = struct
         ~hook:(after (find_commit c1 v1))
         ~max:[ c1 ] ~keep_max:true repo
       >>= fun () ->
-      find_commit c1 v1 >>= fun () ->
+      find_commit c1 v1 () >>= fun () ->
       S.Tree.add tree1 [ "a"; "b"; "c" ] v2 >>= fun tree2 ->
       S.Commit.v repo ~info ~parents:[ S.Commit.hash c1 ] tree2 >>= fun c2 ->
       S.PrivateLayer.wait_for_freeze () >>= fun () ->
@@ -802,7 +803,7 @@ module Make_Layered (S : LAYERED_STORE) = struct
         ~hook:(before (find_commit c2 v2))
         ~max:[ c2 ] ~keep_max:true repo
       >>= fun () ->
-      find_commit c2 v2 >>= fun () ->
+      find_commit c2 v2 () >>= fun () ->
       S.PrivateLayer.wait_for_freeze () >>= fun () ->
       S.Tree.add tree1 [ "a"; "b"; "c" ] v3 >>= fun tree3 ->
       S.Commit.v repo ~info ~parents:[ S.Commit.hash c2 ] tree3 >>= fun c3 ->
@@ -815,7 +816,8 @@ module Make_Layered (S : LAYERED_STORE) = struct
 
   let test_add_during_freeze x () =
     let test repo =
-      let find_commit t v =
+      let find_commit t v () =
+        Log.debug (fun l -> l "find_commit");
         S.Head.get t >>= fun c ->
         S.Commit.of_hash repo (S.Commit.hash c) >>= function
         | None -> Alcotest.fail "no hash found in repo"
@@ -824,7 +826,8 @@ module Make_Layered (S : LAYERED_STORE) = struct
             S.Tree.find tree [ "a"; "b"; "c" ] >|= fun v' ->
             Alcotest.(check (option string)) "v" v' (Some v)
       in
-      let add_commit t v =
+      let add_commit t v () =
+        Log.debug (fun l -> l "add_commit");
         S.Tree.add S.Tree.empty [ "a"; "b"; "c" ] v >>= fun tree ->
         S.set_tree_exn ~parents:[] ~info:(infof "tree1") t [] tree
       in
@@ -834,19 +837,20 @@ module Make_Layered (S : LAYERED_STORE) = struct
         ~keep_max:true repo
       >>= fun () ->
       S.PrivateLayer.wait_for_freeze () >>= fun () ->
-      find_commit t v1 >>= fun () ->
+      find_commit t v1 () >>= fun () ->
       S.PrivateLayer.freeze_with_hook
         ~hook:(after (add_commit t v2))
         ~keep_max:true repo
       >>= fun () ->
       S.PrivateLayer.wait_for_freeze () >>= fun () ->
-      find_commit t v2 >>= fun () ->
-      add_commit t v3 >>= fun () ->
+      find_commit t v2 () >>= fun () ->
+      add_commit t v3 () >>= fun () ->
       S.Head.get t >>= fun c ->
       S.PrivateLayer.freeze_with_hook
         ~hook:(before (find_commit t v3))
         ~max:[ c ] ~keep_max:true repo
-      >>= fun () -> S.Repo.close repo
+      >>= fun () ->
+      S.PrivateLayer.wait_for_freeze () >>= fun () -> S.Repo.close repo
     in
     run x test
 

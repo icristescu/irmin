@@ -21,6 +21,8 @@ val config :
   ?upper_root1:string ->
   ?upper_root0:string ->
   ?keep_max:bool ->
+  ?pause_copy:int ->
+  ?pause_add:int ->
   string ->
   Irmin.config
 (** Setting up the configuration for a layered store. *)

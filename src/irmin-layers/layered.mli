@@ -31,7 +31,15 @@ module Content_addressable
   include
     Irmin.CONTENT_ADDRESSABLE_STORE with type key = K.t and type value = V.t
 
-  val v : 'a U.t -> 'a U.t -> [ `Read ] L.t -> bool -> Lwt_mutex.t -> 'a t
+  val v :
+    'a U.t ->
+    'a U.t ->
+    [ `Read ] L.t ->
+    bool ->
+    Lwt_mutex.t ->
+    int option ->
+    int option ->
+    'a t
 
   val project :
     [ `Read | `Write ] U.t ->

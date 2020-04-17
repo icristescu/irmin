@@ -34,3 +34,16 @@ val copy_branches : unit -> unit
 
 val freeze : unit -> unit
 (** Signals the start of a new freeze, and increments t.nb_freeze *)
+
+type current_freeze = {
+  mutable contents : int;
+  mutable nodes : int;
+  mutable commits : int;
+  mutable branches : int;
+}
+
+val get_current_freeze : unit -> current_freeze
+
+val add : unit -> unit
+
+val get_adds : unit -> int

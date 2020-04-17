@@ -122,7 +122,19 @@ let keep_max =
 
 let reader =
   let doc = Arg.info ~doc:"Benchmark RO reads." [ "r"; "ro_reader" ] in
-  Arg.(value @@ opt bool true doc)
+  Arg.(value @@ opt bool false doc)
+
+let pause_copy =
+  let doc =
+    Arg.info ~doc:"Pause worker thread every n copies." [ "p"; "pause_copy" ]
+  in
+  Arg.(value @@ opt int (-1) doc)
+
+let pause_add =
+  let doc =
+    Arg.info ~doc:"Pause main thread every n adds." [ "a"; "pause_add" ]
+  in
+  Arg.(value @@ opt int (-1) doc)
 
 type config = {
   ncommits : int;
@@ -134,6 +146,8 @@ type config = {
   squash : bool;
   keep_max : bool;
   reader : bool;
+  pause_copy : int;
+  pause_add : int;
 }
 
 let index_log_size = Some 1_000
@@ -150,6 +164,10 @@ module Conf = struct
   let stable_hash = 256
 
   let keep_max = true
+
+  let pause_copy = -1
+
+  let pause_add = -1
 end
 
 module Hash = Irmin.Hash.SHA1
@@ -188,9 +206,10 @@ module FSHelper = struct
 end
 
 let configure_store ?(readonly = false) ?(fresh = true)
-    ?(keep_max = Conf.keep_max) root =
+    ?(keep_max = Conf.keep_max) ?(pause_copy = Conf.pause_copy)
+    ?(pause_add = Conf.pause_add) root =
   let conf = Irmin_pack.config ~readonly ?index_log_size ~fresh root in
-  Irmin_layers.config ~conf ~keep_max root
+  Irmin_layers.config ~conf ~keep_max ~pause_copy ~pause_add root
 
 let init config =
   rm_dir config.root;
@@ -243,7 +262,7 @@ let with_timer f =
   (t1, a)
 
 let freeze config repo i =
-  if i = 0 || i = 2 then (
+  if i = 0 then (
     Fmt.epr "freeze\n%!";
     Store.freeze ~squash:config.squash repo )
   else Lwt.return_unit
@@ -277,7 +296,10 @@ let run_batches config store repo ro_store =
 
 let run config =
   init config;
-  let conf = configure_store config.root ~keep_max:config.keep_max in
+  let conf =
+    configure_store config.root ~keep_max:config.keep_max
+      ~pause_copy:config.pause_copy ~pause_add:config.pause_add
+  in
   Store.Repo.v conf >>= fun repo ->
   Store.master repo >>= fun store ->
   let ro_conf = configure_store ~readonly:true ~fresh:false config.root in
@@ -299,7 +321,8 @@ let run config =
     | _ -> Fmt.epr "unexpected" )
   >>= fun () -> Store.Repo.close repo
 
-let main ncommits nbatches depth clear with_metrics squash keep_max reader =
+let main ncommits nbatches depth clear with_metrics squash keep_max reader
+    pause_copy pause_add =
   let config =
     {
       ncommits;
@@ -311,14 +334,18 @@ let main ncommits nbatches depth clear with_metrics squash keep_max reader =
       squash;
       keep_max;
       reader;
+      pause_copy;
+      pause_add;
     }
   in
   Fmt.epr
     "Benchmarking ./%s with depth = %d, ncommits/batch = %d, nbatches = %d, \
-     clear = %b, metrics = %b, squash = %b, keep_max = %b reader = %b \n\
+     clear = %b, metrics = %b, squash = %b, keep_max = %b, reader = %b, \
+     pause_copy = %d, pause_add = %d \n\
      %!"
     config.root config.depth config.ncommits config.nbatches config.clear
-    config.with_metrics config.squash config.keep_max config.reader;
+    config.with_metrics config.squash config.keep_max config.reader
+    config.pause_copy config.pause_add;
   Lwt_main.run (run config)
 
 let main_term =
@@ -331,7 +358,9 @@ let main_term =
     $ metrics_flag
     $ squash
     $ keep_max
-    $ reader)
+    $ reader
+    $ pause_copy
+    $ pause_add)
 
 let () =
   let info = Term.info "Benchmarks for layered store" in

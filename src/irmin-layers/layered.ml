@@ -33,7 +33,21 @@ module Copy
     (SRC : Irmin.CONTENT_ADDRESSABLE_STORE)
     (DST : CA with type key = SRC.key and type value = SRC.value) =
 struct
-  let add_to_dst name add dk (k, v) =
+  let pause pause_copy =
+    match pause_copy with
+    | None -> Lwt.return_unit
+    | Some pause_copy ->
+        let current = Stats.get_current_freeze () in
+        if
+          (current.contents + current.nodes + current.commits) mod pause_copy
+          = 0
+        then (
+          Log.debug (fun l -> l "pausing copy thread...");
+          Lwt.pause () )
+        else Lwt.return_unit
+
+  let add_to_dst name add dk (k, v) pause_copy =
+    pause pause_copy >>= fun () ->
     add v >>= fun k' ->
     if not (Irmin.Type.equal dk k k') then
       Fmt.kstrf
@@ -52,16 +66,18 @@ struct
         true
     | false -> false
 
-  let copy ~src ~dst ~aux str k =
+  let copy ~src ~dst ~aux str k pause_copy =
     Log.debug (fun l -> l "copy %s %a" str (Irmin.Type.pp DST.Key.t) k);
     SRC.find src k >>= function
     | None -> Lwt.return_unit
-    | Some v -> aux v >>= fun () -> add_to_dst str (DST.add dst) DST.Key.t (k, v)
+    | Some v ->
+        aux v >>= fun () ->
+        add_to_dst str (DST.add dst) DST.Key.t (k, v) pause_copy
 
-  let check_and_copy ~src ~dst ~aux str k =
+  let check_and_copy ~src ~dst ~aux str k pause_copy =
     already_in_dst ~dst k >>= function
     | true -> Lwt.return_false
-    | false -> copy ~src ~dst ~aux str k >|= fun () -> true
+    | false -> copy ~src ~dst ~aux str k pause_copy >|= fun () -> true
 end
 
 module Content_addressable
@@ -79,6 +95,8 @@ struct
     mutable flip : bool;
     uppers : 'a U.t * 'a U.t;
     lock : Lwt_mutex.t;
+    pause_copy : int option;
+    pause_add : int option;
   }
 
   let current_upper t = if t.flip then fst t.uppers else snd t.uppers
@@ -109,10 +127,12 @@ struct
 
   let check_and_copy_to_lower t ~dst ~aux str k =
     CopyLower.check_and_copy ~src:(previous_upper t) ~dst ~aux str k
+      t.pause_copy
     >|= stats str
 
   let check_and_copy_to_current t ~dst ~aux str (k : key) =
     CopyUpper.check_and_copy ~src:(previous_upper t) ~dst ~aux str k
+      t.pause_copy
     >|= stats str
 
   let check_and_copy :
@@ -158,20 +178,34 @@ struct
         | true -> Lwt.return_true
         | false -> L.mem t.lower k )
 
+  let pause t =
+    match t.pause_add with
+    | None -> Lwt.return_unit
+    | Some pause_add ->
+        let adds = Stats.get_adds () in
+        if adds mod pause_add = 0 then (
+          Log.debug (fun l -> l "pausing main thread...");
+          Lwt.pause () )
+        else Lwt.return_unit
+
   let add t v =
+    pause t >>= fun () ->
     Lwt_mutex.with_lock t.lock (fun () ->
         Log.debug (fun l -> l "add in %s" (log_current_upper t));
         let upper = current_upper t in
+        Stats.add ();
         U.add upper v)
 
   let unsafe_add t k v =
+    pause t >>= fun () ->
     Lwt_mutex.with_lock t.lock (fun () ->
         Log.debug (fun l -> l "unsafe_add in %s" (log_current_upper t));
         let upper = current_upper t in
+        Stats.add ();
         U.unsafe_add upper k v)
 
-  let v upper second_upper lower flip lock =
-    { lower; flip; uppers = (upper, second_upper); lock }
+  let v upper second_upper lower flip lock pause_copy pause_add =
+    { lower; flip; uppers = (upper, second_upper); lock; pause_copy; pause_add }
 
   let project upper second_upper t = { t with uppers = (upper, second_upper) }
 

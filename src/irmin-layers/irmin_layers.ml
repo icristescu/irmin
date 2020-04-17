@@ -31,6 +31,10 @@ module Default = struct
   let upper_root0 = "upper0"
 
   let keep_max = false
+
+  let pause_copy = -1
+
+  let pause_add = -1
 end
 
 let root_key = Conf.root
@@ -61,14 +65,30 @@ let keep_max_key =
 
 let get_keep_max conf = Conf.get conf keep_max_key
 
+let pause_copy_key =
+  Conf.key ~doc:"Pause the worker thread at every n copies." "pause-copy"
+    Conf.int Default.pause_copy
+
+let pause_copy conf = Conf.get conf pause_copy_key
+
+let pause_add_key =
+  Conf.key ~doc:"Pause the main thread at every n adds." "pause-add" Conf.int
+    Default.pause_add
+
+let pause_add conf = Conf.get conf pause_add_key
+
 let config ?(conf = Conf.empty) ?(lower_root = Default.lower_root)
     ?(upper_root1 = Default.upper_root1) ?(upper_root0 = Default.upper_root0)
-    ?(keep_max = Default.keep_max) root =
+    ?(keep_max = Default.keep_max) ?(pause_copy = Default.pause_copy)
+    ?(pause_add = Default.pause_add) root =
   let config = Conf.add conf lower_root_key lower_root in
   let config = Conf.add config upper_root0_key upper_root0 in
   let config = Conf.add config keep_max_key keep_max in
   let config = Conf.add config root_key (Some root) in
   let config = Conf.add config upper_root1_key upper_root1 in
+  let config = Conf.add config pause_copy_key pause_copy in
+  let config = Conf.add config pause_add_key pause_add in
+
   config
 
 module IO = IO.Unix
@@ -306,17 +326,23 @@ end = struct
           IO.v file init
         in
         let generation = read_file generation_file in
+        let pause_copy =
+          if pause_copy conf = -1 then None else Some (pause_copy conf)
+        in
+        let pause_add =
+          if pause_add conf = -1 then None else Some (pause_add conf)
+        in
         let contents =
           Contents.CA.v (U.contents_t upper1) (U.contents_t upper0)
-            (L.contents_t lower) flip reset_lock
+            (L.contents_t lower) flip reset_lock pause_copy pause_add
         in
         let nodes =
           Node.CA.v (U.node_t upper1) (U.node_t upper0) (L.node_t lower) flip
-            reset_lock
+            reset_lock pause_copy pause_add
         in
         let commits =
           Commit.CA.v (U.commit_t upper1) (U.commit_t upper0) (L.commit_t lower)
-            flip reset_lock
+            flip reset_lock pause_copy pause_add
         in
         let branch =
           Branch.v (U.branch_t upper1) (U.branch_t upper0) (L.branch_t lower)

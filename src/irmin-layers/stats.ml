@@ -12,6 +12,7 @@ type i = {
   mutable nodes : int;
   mutable commits : int;
   mutable branches : int;
+  mutable adds : int;
 }
 
 let fresh_stats () =
@@ -24,7 +25,7 @@ let fresh_stats () =
       copied_branches = [];
     }
   in
-  { t; contents = 0; nodes = 0; commits = 0; branches = 0 }
+  { t; contents = 0; nodes = 0; commits = 0; branches = 0; adds = 0 }
 
 let stats = fresh_stats ()
 
@@ -32,7 +33,8 @@ let reset_stats_i () =
   stats.contents <- 0;
   stats.nodes <- 0;
   stats.commits <- 0;
-  stats.branches <- 0
+  stats.branches <- 0;
+  stats.adds <- 0
 
 let reset_stats () =
   stats.t.nb_freeze <- 0;
@@ -51,6 +53,21 @@ let get () =
     copied_branches = List.rev (stats.branches :: stats.t.copied_branches);
   }
 
+type current_freeze = {
+  mutable contents : int;
+  mutable nodes : int;
+  mutable commits : int;
+  mutable branches : int;
+}
+
+let get_current_freeze () =
+  {
+    contents = stats.contents;
+    nodes = stats.nodes;
+    commits = stats.commits;
+    branches = stats.branches;
+  }
+
 let freeze () =
   stats.t.nb_freeze <- succ stats.t.nb_freeze;
   if stats.t.nb_freeze <> 1 then (
@@ -67,3 +84,7 @@ let copy_nodes () = stats.nodes <- succ stats.nodes
 let copy_commits () = stats.commits <- succ stats.commits
 
 let copy_branches () = stats.branches <- succ stats.branches
+
+let add () = stats.adds <- succ stats.adds
+
+let get_adds () = stats.adds
