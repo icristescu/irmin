@@ -342,6 +342,40 @@ module Tezos_Usecase = struct
     check_block1a >>= fun () ->
     Store.Repo.close ctxt.index.repo >>= fun () -> Store.Repo.close repo
 
+  let test_ro_read () =
+    let store_name = fresh_name () in
+    clean_dir store_name;
+    init store_name >>= fun ctxt ->
+    Store.Repo.v (config ~readonly:true ~fresh:false store_name) >>= fun repo ->
+    Logs.debug (fun l ->
+        l "generation = %d" (Store.Private.Repo.get_generation repo));
+    create_block1 ctxt >>= fun (ctxt, block1) ->
+    checkout_and_create ctxt.index block1 create_block1a
+    >>= fun (ctxt, block1a) ->
+    let check_block1 tree =
+      Store.Tree.find tree [ "version" ] >|= fun version ->
+      Alcotest.(check (option string)) "version.0.0" (Some "0.0") version
+    in
+    let _check_block2 tree =
+      Store.Tree.find tree [ "a"; "b" ] >|= fun novembre ->
+      Alcotest.(check (option string)) "nov" (Some "Novembre") novembre
+    in
+    let check_block3 tree =
+      Store.Tree.find tree [ "a"; "c" ] >|= fun juin ->
+      Alcotest.(check (option string)) "juin" (Some "Juin") juin
+    in
+    gc ctxt.index block1a >>= fun ctxt ->
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
+    Store.Commit.of_hash repo (Store.Commit.hash block1a) >>= function
+    | None -> Alcotest.fail "no hash found in repo"
+    | Some commit ->
+        let tree = Store.Commit.tree commit in
+        check_block1 tree >>= fun () ->
+        gc ctxt.index block1a >>= fun ctxt ->
+        Store.PrivateLayer.wait_for_freeze () >>= fun () ->
+        check_block3 tree >>= fun () ->
+        Store.Repo.close ctxt.index.repo >>= fun () -> Store.Repo.close repo
+
   let test_close_and_reopen () =
     let store_name = fresh_name () in
     clean_dir store_name;
@@ -393,6 +427,8 @@ module Tezos_Usecase = struct
           Lwt_main.run (test_rw_ro_instances ()));
       Alcotest.test_case "Test close and reopen a store" `Quick (fun () ->
           Lwt_main.run (test_close_and_reopen ()));
+      Alcotest.test_case "Test ro store" `Quick (fun () ->
+          Lwt_main.run (test_ro_read ()));
     ]
 end
 
