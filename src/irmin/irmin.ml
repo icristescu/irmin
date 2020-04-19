@@ -281,6 +281,8 @@ struct
       let get_generation _t = 0
 
       let force_generation _t = 0
+
+      let ro _t = false
     end
   end
 

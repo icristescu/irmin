@@ -474,6 +474,8 @@ module Private : sig
       val get_generation : t -> int
 
       val force_generation : t -> int
+
+      val ro : t -> bool
     end
 
     (** URI-based low-level sync. *)

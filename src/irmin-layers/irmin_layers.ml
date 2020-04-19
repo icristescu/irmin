@@ -255,6 +255,8 @@ end = struct
         let commit_t = (node_t, commit_t) in
         f contents_t node_t commit_t
 
+      let ro t = U.ro (fst t.uppers)
+
       let unsafe_close t =
         t.closed <- true;
         L.close t.lower >>= fun () ->
@@ -367,7 +369,9 @@ end = struct
         Contents.CA.clear_upper t.contents >>= fun () ->
         Node.CA.clear_upper t.nodes >>= fun () ->
         Commit.CA.clear_upper t.commits >>= fun () ->
-        Branch.clear_upper t.branch
+        Branch.clear_upper t.branch >|= fun () ->
+        t.generation <- t.generation + 1;
+        write_file t.generation_file t.generation
 
       let copy_contents contents t k =
         Contents.CA.check_and_copy contents t.contents
@@ -517,8 +521,6 @@ end = struct
 
       let post_copy t =
         clear_upper t >|= fun () ->
-        t.generation <- t.generation + 1;
-        write_file t.generation_file t.generation;
         Lwt_mutex.unlock freeze_lock;
         Log.debug (fun l -> l "free lock")
 

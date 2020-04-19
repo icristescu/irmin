@@ -719,6 +719,17 @@ module Make (P : S.PRIVATE) = struct
             add_to_findv_cache t step v;
             Lwt.return_some v
       in
+      let retry repo v t h =
+        try of_value repo v
+        with e ->
+          if P.Repo.ro repo then (
+            let _ = P.Repo.force_generation repo in
+            t.info.value <- None;
+            value_of_hash t repo h >>= function
+            | None -> Lwt.return_none
+            | Some v -> of_value repo v )
+          else raise e
+      in
       let of_t () =
         match t.v with
         | Map m -> of_map m
@@ -730,11 +741,11 @@ module Make (P : S.PRIVATE) = struct
         | Hash (repo, h) -> (
             let generation = P.Repo.get_generation repo in
             match value ~generation t with
-            | Some v -> of_value repo v
+            | Some v -> retry repo v t h
             | None -> (
                 value_of_hash t repo h >>= function
                 | None -> Lwt.return_none
-                | Some v -> of_value repo v ) )
+                | Some v -> retry repo v t h ) )
       in
       match map t with
       | Some m -> of_map m

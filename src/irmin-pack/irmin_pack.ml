@@ -470,6 +470,8 @@ end = struct
         Branch.v ~fresh ~readonly root >|= fun branch ->
         { contents; node; commit; branch; config; index }
 
+      let ro t = readonly t.config
+
       let close t =
         Index.close t.index;
         Contents.CA.close (contents_t t) >>= fun () ->

@@ -799,6 +799,8 @@ module type PRIVATE = sig
     val get_generation : t -> int
 
     val force_generation : t -> int
+
+    val ro : t -> bool
   end
 
   module Sync : sig
