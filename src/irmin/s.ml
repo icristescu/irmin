@@ -795,6 +795,10 @@ module type PRIVATE = sig
       'a Lwt.t
 
     val clear : t -> unit Lwt.t
+
+    val get_generation : t -> int
+
+    val force_generation : t -> int
   end
 
   module Sync : sig

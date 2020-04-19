@@ -849,4 +849,39 @@ module Make_Layered (S : LAYERED_STORE) = struct
       >>= fun () -> S.Repo.close repo
     in
     run x test
+
+  let test_freeze_tree x () =
+    let info = info "two" in
+    let test repo =
+      let find4 tree =
+        S.Tree.find tree [ "4" ] >|= fun x ->
+        Alcotest.(check (option string)) "x4" (Some "x4") x
+      in
+      let find5 tree () =
+        Log.debug (fun l -> l "find2");
+        S.Tree.find tree [ "5" ] >|= fun x ->
+        Alcotest.(check (option string)) "x5" (Some "x5") x
+      in
+      let tree = S.Tree.empty in
+      S.Tree.add tree [ "1"; "2"; "3" ] "x1" >>= fun tree ->
+      S.Tree.add tree [ "4" ] "x4" >>= fun tree ->
+      S.Tree.add tree [ "5" ] "x5" >>= fun tree ->
+      S.Commit.v repo ~info ~parents:[] tree >>= fun h ->
+      S.Tree.clear tree;
+      S.Commit.of_hash repo (S.Commit.hash h) >>= function
+      | None -> Alcotest.fail "commit not found"
+      | Some commit ->
+          let tree = S.Commit.tree commit in
+          find4 tree >>= fun () ->
+          Alcotest.(check int)
+            "generation.0" 0
+            (S.Private.Repo.get_generation repo);
+          S.freeze ~keep_max:true ~max:[ h ] repo >>= fun () ->
+          S.PrivateLayer.wait_for_freeze () >>= fun () ->
+          Alcotest.(check int)
+            "generation.1" 1
+            (S.Private.Repo.get_generation repo);
+          find5 tree () >>= fun () -> S.Repo.close repo
+    in
+    run x test
 end

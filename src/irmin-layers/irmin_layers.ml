@@ -227,6 +227,8 @@ end = struct
         mutable closed : bool;
         conf : Conf.t;
         flip_file : IO.t;
+        generation_file : IO.t;
+        mutable generation : int;
       }
 
       let contents_t t : 'a Contents.t = t.contents
@@ -260,17 +262,25 @@ end = struct
 
       let close t = Lwt_mutex.with_lock freeze_lock (fun () -> unsafe_close t)
 
-      let read_flip_file file =
+      let read_file file =
         let buf = Bytes.create 1 in
         IO.read file buf;
-        match Bytes.get buf 0 with
-        | '0' -> false
-        | '1' -> true
-        | _ -> failwith "corrupted flip file"
+        let ch = Bytes.get buf 0 in
+        int_of_char ch
+
+      let write_file file i =
+        let buf = Bytes.make 1 (char_of_int i) in
+        IO.write file buf
+
+      let read_flip_file file =
+        match read_file file with
+        | 0 -> false
+        | 1 -> true
+        | d -> failwith ("corrupted flip file " ^ string_of_int d)
 
       let write_flip_file t =
-        let buf = if t.flip then Bytes.make 1 '1' else Bytes.make 1 '0' in
-        IO.write t.flip_file buf
+        let flip = if t.flip then 1 else 0 in
+        write_file t.flip_file flip
 
       let v conf =
         let upper_name = Filename.concat (root conf) (upper_root1 conf) in
@@ -284,10 +294,16 @@ end = struct
         U.v conf_upper >|= fun upper0 ->
         let flip_file =
           let file = Filename.concat (root conf) "flip" in
-          let init = Bytes.make 1 '1' in
+          let init = Bytes.make 1 (char_of_int 1) in
           IO.v file init
         in
         let flip = read_flip_file flip_file in
+        let generation_file =
+          let file = Filename.concat (root conf) "generation" in
+          let init = Bytes.make 1 (char_of_int 0) in
+          IO.v file init
+        in
+        let generation = read_file generation_file in
         let contents =
           Contents.CA.v (U.contents_t upper1) (U.contents_t upper0)
             (L.contents_t lower) flip reset_lock
@@ -315,6 +331,8 @@ end = struct
           flip;
           flip_file;
           closed = false;
+          generation;
+          generation_file;
         }
 
       let flip_upper t =
@@ -325,6 +343,13 @@ end = struct
         Commit.CA.flip_upper t.commits;
         Branch.flip_upper t.branch;
         Lwt.return_unit
+
+      let get_generation t = t.generation
+
+      let force_generation t =
+        let g = read_file t.generation_file in
+        t.generation <- g;
+        g
 
       let layer_id t store_handler =
         ( match store_handler with
@@ -492,6 +517,8 @@ end = struct
 
       let post_copy t =
         clear_upper t >|= fun () ->
+        t.generation <- t.generation + 1;
+        write_file t.generation_file t.generation;
         Lwt_mutex.unlock freeze_lock;
         Log.debug (fun l -> l "free lock")
 

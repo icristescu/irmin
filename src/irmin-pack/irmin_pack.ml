@@ -486,6 +486,10 @@ end = struct
         Contents.CA.sync (contents_t t);
         Commit.CA.sync (snd (commit_t t));
         Branch.sync (branch_t t)
+
+      let get_generation _t = 0
+
+      let force_generation _t = 0
     end
   end
 

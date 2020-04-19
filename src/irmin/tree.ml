@@ -311,7 +311,11 @@ module Make (P : S.PRIVATE) = struct
       mutable map : map option;
       mutable hash : hash option;
       mutable findv_cache : map option;
+      mutable generation : int option;
     }
+    (** when caching the value, store also the generation of the repo used for
+        finding a value; when retrieving the value, check the generation. if
+        generation changed then the value is outdated. *)
 
     and v =
       | Map of map
@@ -356,16 +360,16 @@ module Make (P : S.PRIVATE) = struct
     let info_is_empty i =
       i.map = None && i.value = None && i.findv_cache = None && i.hash = None
 
-    let of_v v =
-      let hash, map, value =
+    let of_v ?generation v =
+      let hash, map, value, generation =
         match v with
-        | Map m -> (None, Some m, None)
-        | Hash (_, k) -> (Some k, None, None)
-        | Value (_, v, None) -> (None, None, Some v)
-        | Value _ -> (None, None, None)
+        | Map m -> (None, Some m, None, None)
+        | Hash (_, k) -> (Some k, None, None, None)
+        | Value (_, v, None) -> (None, None, Some v, generation)
+        | Value _ -> (None, None, None, None)
       in
       let findv_cache = None in
-      let info = { hash; map; value; findv_cache } in
+      let info = { hash; map; value; findv_cache; generation } in
       { v; info }
 
     let t node = Type.map node of_v (fun t -> t.v)
@@ -405,7 +409,8 @@ module Make (P : S.PRIVATE) = struct
         i.value <- None;
         i.map <- None;
         i.hash <- None;
-        i.findv_cache <- None );
+        i.findv_cache <- None;
+        i.generation <- None );
       (clear_map [@tailcall]) ~max_depth depth (map @ added @ findv)
 
     and clear ~max_depth depth t = clear_info ~v:t.v ~max_depth depth t.info
@@ -434,7 +439,9 @@ module Make (P : S.PRIVATE) = struct
 
     let of_hash repo k = of_v (Hash (repo, k))
 
-    let of_value ?added repo v = of_v (Value (repo, v, added))
+    let of_value ?added repo v =
+      let generation = P.Repo.get_generation repo in
+      of_v ~generation (Value (repo, v, added))
 
     let empty = function
       | { v = Hash (repo, _) | Value (repo, _, _); _ } ->
@@ -468,11 +475,20 @@ module Make (P : S.PRIVATE) = struct
           m
       | _, m -> m
 
-    let value t =
+    let generation_change ~generation t =
+      match t.info.generation with
+      | None -> ()
+      | Some gen -> if gen <> generation then t.info.value <- None
+
+    let value ?generation t =
+      ( match generation with
+      | None -> ()
+      | Some generation -> generation_change ~generation t );
       match (t.v, t.info.value) with
       | Value (_, v, None), None ->
           let v = Some v in
           t.info.value <- v;
+          t.info.generation <- generation;
           v
       | _, v -> v
 
@@ -496,7 +512,8 @@ module Make (P : S.PRIVATE) = struct
               | Value (_, v, Some a) -> of_value (value_of_adds t v a)
               | Map m -> of_value (value_of_map t m) ) )
 
-    let rec value_of_map t ~value_of_adds map =
+    let rec value_of_map t ~value_of_adds map ~generation =
+      t.info.generation <- generation;
       if StepMap.is_empty map then (
         t.info.value <- Some P.Node.Val.empty;
         P.Node.Val.empty )
@@ -515,7 +532,7 @@ module Make (P : S.PRIVATE) = struct
               | `Node n ->
                   let n =
                     to_hash ~value_of_adds
-                      ~value_of_map:(value_of_map ~value_of_adds)
+                      ~value_of_map:(value_of_map ~value_of_adds ~generation)
                       n
                   in
                   let v = `Node n in
@@ -525,32 +542,44 @@ module Make (P : S.PRIVATE) = struct
         t.info.value <- Some v;
         v
 
-    let value_of_elt ~value_of_adds e =
+    let value_of_elt ~value_of_adds e ~generation =
       match e with
       | `Contents (c, m) -> `Contents (Contents.to_hash c, m)
       | `Node n ->
           let h =
-            to_hash ~value_of_map:(value_of_map ~value_of_adds) ~value_of_adds n
+            to_hash
+              ~value_of_map:(value_of_map ~value_of_adds ~generation)
+              ~value_of_adds n
           in
           `Node h
 
-    let rec value_of_adds t v added =
+    let rec value_of_adds t v added ~generation =
       let added = StepMap.bindings added in
       let v =
         List.fold_left
           (fun v (k, e) ->
-            let e = value_of_elt ~value_of_adds e in
+            let e =
+              value_of_elt
+                ~value_of_adds:(value_of_adds ~generation)
+                e ~generation
+            in
             P.Node.Val.add v k e)
           v added
       in
       t.info.value <- Some v;
       v
 
-    let value_of_map = value_of_map ~value_of_adds
+    let value_of_map ~generation =
+      value_of_map ~generation ~value_of_adds:(value_of_adds ~generation)
 
-    let to_hash = to_hash ~value_of_adds ~value_of_map
+    let to_hash ?generation =
+      to_hash
+        ~value_of_adds:(value_of_adds ~generation)
+        ~value_of_map:(value_of_map ~generation)
 
     let value_of_hash t repo k =
+      let generation = P.Repo.get_generation repo in
+      generation_change ~generation t;
       match t.info.value with
       | Some _ as v -> Lwt.return v
       | None -> (
@@ -559,18 +588,19 @@ module Make (P : S.PRIVATE) = struct
           | None -> None
           | Some _ as v ->
               t.info.value <- v;
+              t.info.generation <- Some generation;
               v )
 
-    let to_value t =
+    let to_value ?generation t =
       match value t with
       | Some v -> Lwt.return_some v
       | None -> (
           match t.v with
           | Value (_, v, None) -> Lwt.return_some v
           | Value (_, v, Some m) ->
-              let v = value_of_adds t v m in
+              let v = value_of_adds t v m ~generation in
               Lwt.return_some v
-          | Map m -> Lwt.return_some (value_of_map t m)
+          | Map m -> Lwt.return_some (value_of_map t m ~generation)
           | Hash (repo, h) -> value_of_hash t repo h )
 
     let to_map t =
@@ -698,7 +728,8 @@ module Make (P : S.PRIVATE) = struct
             | Some _ as v -> Lwt.return v
             | None -> of_value repo v )
         | Hash (repo, h) -> (
-            match value t with
+            let generation = P.Repo.get_generation repo in
+            match value ~generation t with
             | Some v -> of_value repo v
             | None -> (
                 value_of_hash t repo h >>= function
@@ -866,7 +897,7 @@ module Make (P : S.PRIVATE) = struct
 
   let of_private_node repo n = Node.of_value repo n
 
-  let to_private_node = Node.to_value
+  let to_private_node n = Node.to_value n
 
   let node_t = Node.t
 
@@ -1137,10 +1168,12 @@ module Make (P : S.PRIVATE) = struct
 
   let export ?clear repo contents_t node_t n =
     let seen = Hashes.create 127 in
+    let generation = P.Repo.get_generation repo in
+    Node.generation_change ~generation n;
     let add_node n v () =
       cnt.node_add <- cnt.node_add + 1;
       P.Node.add node_t v >|= fun k ->
-      let k' = Node.to_hash n in
+      let k' = Node.to_hash n ~generation in
       assert (Type.equal P.Hash.t k k');
       Node.export ?clear repo n k
     in
@@ -1151,11 +1184,13 @@ module Make (P : S.PRIVATE) = struct
       assert (Type.equal P.Hash.t k k');
       Contents.export ?clear repo c k
     in
-    let add_node_map n x () = add_node n (Node.value_of_map n x) () in
+    let add_node_map n x () =
+      add_node n (Node.value_of_map n x ~generation:(Some generation)) ()
+    in
     let todo = Stack.create () in
     let rec add_to_todo : type a. _ -> (unit -> a Lwt.t) -> a Lwt.t =
      fun n k ->
-      let h = Node.to_hash n in
+      let h = Node.to_hash ~generation n in
       if Hashes.mem seen h then k ()
       else (
         Hashes.add seen h ();
@@ -1182,7 +1217,7 @@ module Make (P : S.PRIVATE) = struct
                     (* 1. convert partial values to total values *)
                     ( match n.v with
                     | Value (_, _, Some _) -> (
-                        Node.to_value n >|= function
+                        Node.to_value ~generation n >|= function
                         | None -> ()
                         | Some v -> n.v <- Value (repo, v, None) )
                     | _ -> Lwt.return_unit )
@@ -1230,7 +1265,7 @@ module Make (P : S.PRIVATE) = struct
     in
     (add_to_todo [@tailcall]) n @@ fun () ->
     loop () >|= fun () ->
-    let x = Node.to_hash n in
+    let x = Node.to_hash n ~generation in
     Log.debug (fun l -> l "Tree.export -> %a" pp_hash x);
     x
 

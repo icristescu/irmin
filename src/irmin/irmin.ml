@@ -277,6 +277,10 @@ struct
         Contents.CA.clear t.contents >>= fun () ->
         Node.CA.clear (snd t.nodes) >>= fun () ->
         Commit.CA.clear (snd t.commits) >>= fun () -> Branch.clear t.branch
+
+      let get_generation _t = 0
+
+      let force_generation _t = 0
     end
   end
 
