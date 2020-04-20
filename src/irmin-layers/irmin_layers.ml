@@ -121,7 +121,7 @@ module type STORE = sig
 
   val async_freeze : unit -> bool
 
-  val upper_in_use : repo -> string
+  val upper_in_use : repo -> string Lwt.t
 
   module PrivateLayer : sig
     module Hook : sig
@@ -235,6 +235,7 @@ end = struct
       module LP = L.Private
       module U = UP.Repo
       module L = LP.Repo
+      module Flip = Flip.Make (IO)
 
       type t = {
         contents : [ `Read ] Contents.CA.t;
@@ -243,10 +244,9 @@ end = struct
         branch : Branch.t;
         lower : L.t;
         uppers : U.t * U.t;
-        mutable flip : bool;
+        flip : Flip.t;
         mutable closed : bool;
         conf : Conf.t;
-        flip_file : IO.t;
         generation_file : IO.t;
         mutable generation : int;
       }
@@ -259,11 +259,14 @@ end = struct
 
       let branch_t t = t.branch
 
-      let current_upper t = if t.flip then fst t.uppers else snd t.uppers
+      let current_upper t =
+        Flip.get t.flip >|= fun f -> if f then fst t.uppers else snd t.uppers
 
-      let previous_upper t = if t.flip then snd t.uppers else fst t.uppers
+      let previous_upper t =
+        Flip.get t.flip >|= fun f -> if f then snd t.uppers else fst t.uppers
 
-      let log_current_upper t = if t.flip then "upper1" else "upper0"
+      let log_current_upper t =
+        Flip.get t.flip >|= fun f -> if f then "upper1" else "upper0"
 
       let batch t f =
         U.batch (fst t.uppers) @@ fun b n c ->
@@ -294,16 +297,6 @@ end = struct
         let buf = Bytes.make 1 (char_of_int i) in
         IO.write file buf
 
-      let read_flip_file file =
-        match read_file file with
-        | 0 -> false
-        | 1 -> true
-        | d -> failwith ("corrupted flip file " ^ string_of_int d)
-
-      let write_flip_file t =
-        let flip = if t.flip then 1 else 0 in
-        write_file t.flip_file flip
-
       let v conf =
         let upper_name = Filename.concat (root conf) (upper_root1 conf) in
         let conf_upper = Conf.add conf Conf.root (Some upper_name) in
@@ -313,13 +306,10 @@ end = struct
         L.v conf_lower >>= fun lower ->
         let upper_name = Filename.concat (root conf) (upper_root0 conf) in
         let conf_upper = Conf.add conf Conf.root (Some upper_name) in
-        U.v conf_upper >|= fun upper0 ->
-        let flip_file =
-          let file = Filename.concat (root conf) "flip" in
-          let init = Bytes.make 1 (char_of_int 1) in
-          IO.v file init
-        in
-        let flip = read_flip_file flip_file in
+        U.v conf_upper >>= fun upper0 ->
+        let flip_name = Filename.concat (root conf) "flip" in
+        Flip.v ~file:flip_name ~default:true >>= fun flip ->
+        Flip.get flip >|= fun flip_value ->
         let generation_file =
           let file = Filename.concat (root conf) "generation" in
           let init = Bytes.make 1 (char_of_int 0) in
@@ -334,19 +324,19 @@ end = struct
         in
         let contents =
           Contents.CA.v (U.contents_t upper1) (U.contents_t upper0)
-            (L.contents_t lower) flip reset_lock pause_copy pause_add
+            (L.contents_t lower) flip_value reset_lock pause_copy pause_add
         in
         let nodes =
-          Node.CA.v (U.node_t upper1) (U.node_t upper0) (L.node_t lower) flip
-            reset_lock pause_copy pause_add
+          Node.CA.v (U.node_t upper1) (U.node_t upper0) (L.node_t lower)
+            flip_value reset_lock pause_copy pause_add
         in
         let commits =
           Commit.CA.v (U.commit_t upper1) (U.commit_t upper0) (L.commit_t lower)
-            flip reset_lock pause_copy pause_add
+            flip_value reset_lock pause_copy pause_add
         in
         let branch =
           Branch.v (U.branch_t upper1) (U.branch_t upper0) (L.branch_t lower)
-            flip reset_lock
+            flip_value reset_lock
         in
         {
           contents;
@@ -357,20 +347,17 @@ end = struct
           uppers = (upper1, upper0);
           conf;
           flip;
-          flip_file;
           closed = false;
           generation;
           generation_file;
         }
 
       let flip_upper t =
-        t.flip <- not t.flip;
-        write_flip_file t;
+        Flip.flip t.flip >|= fun () ->
         Contents.CA.flip_upper t.contents;
         Node.CA.flip_upper t.nodes;
         Commit.CA.flip_upper t.commits;
-        Branch.flip_upper t.branch;
-        Lwt.return_unit
+        Branch.flip_upper t.branch
 
       let get_generation t = t.generation
 
@@ -416,7 +403,8 @@ end = struct
                 (UP.Node.Val.list v)
             in
             let node k = Node.CA.check_and_copy nodes t.nodes ~aux "Node" k in
-            Upper.Repo.iter (previous_upper t) ~min:[] ~max:[ root ] ~node ~skip
+            previous_upper t >>= fun previous ->
+            Upper.Repo.iter previous ~min:[] ~max:[ root ] ~node ~skip
 
       let copy_commit ~copy_tree commits nodes contents t k =
         let aux c = copy_tree nodes contents t (UP.Commit.Val.node c) in
@@ -424,8 +412,8 @@ end = struct
 
       let copy_branches t =
         let commit_exists_lower = L.commit_t t.lower |> LP.Commit.mem in
-        let commit_exists_upper =
-          current_upper t |> U.commit_t |> UP.Commit.mem
+        let commit_exists_upper h =
+          current_upper t >|= U.commit_t >>= fun u -> UP.Commit.mem u h
         in
         Branch.copy t.branch commit_exists_lower commit_exists_upper
 
@@ -458,15 +446,16 @@ end = struct
 
         let copy t ~min ~max () =
           Log.debug (fun f -> f "copy to lower");
-          Upper.Repo.export ~full:false ~min ~max:(`Max max) (previous_upper t)
+          previous_upper t
+          >>= Upper.Repo.export ~full:false ~min ~max:(`Max max)
           >>= copy_slice t
       end
 
       module CopyToUpper = struct
         let copy_max_commits t max =
-          Log.debug (fun f ->
-              f "copy max commits to current %s" (log_current_upper t));
-          let upper = current_upper t in
+          log_current_upper t >>= fun s ->
+          Log.debug (fun f -> f "copy max commits to current %s" s);
+          current_upper t >>= fun upper ->
           Lwt_list.iter_p
             (fun k ->
               U.batch upper (fun contents nodes commits ->
@@ -477,7 +466,7 @@ end = struct
             max
 
         let copy_slice t slice =
-          let upper = current_upper t in
+          current_upper t >>= fun upper ->
           UP.Slice.iter slice (function
             | `Commit (k, _) ->
                 U.batch upper (fun contents nodes commits ->
@@ -501,13 +490,14 @@ end = struct
 
         (** Copy the heads that include a max commit *)
         let copy_heads t max heads =
-          Log.debug (fun f ->
-              f "copy heads to current %s" (log_current_upper t));
+          log_current_upper t >>= fun s ->
+          Log.debug (fun f -> f "copy heads to current %s" s);
+          previous_upper t >>= fun previous ->
           Lwt_list.iter_p
             (fun head ->
               Upper.Repo.export ~full:false ~min:max
                 ~max:(`Max [ head ])
-                (previous_upper t)
+                previous
               >>= fun slice ->
               List.map (fun c -> Upper.Commit.hash c) max
               |> empty_intersection slice
@@ -518,8 +508,7 @@ end = struct
       end
 
       let clear t =
-        let buf = Bytes.make 1 '1' in
-        IO.write t.flip_file buf;
+        Flip.set t.flip true >>= fun () ->
         L.clear t.lower >>= fun () ->
         U.clear (fst t.uppers) >>= fun () -> U.clear (snd t.uppers)
 
@@ -553,7 +542,8 @@ end = struct
       let async_freeze () = Lwt_mutex.is_locked freeze_lock
 
       let upper_in_use t =
-        if t.flip then upper_root1 t.conf else upper_root0 t.conf
+        Flip.get t.flip >|= fun f ->
+        if f then upper_root1 t.conf else upper_root0 t.conf
     end
   end
 
@@ -580,7 +570,7 @@ end = struct
 
   let freeze_with_hook ?(min = []) ?(max = []) ?(squash = false) ?keep_max
       ?(heads = []) ?(recovery = false) ?hook t =
-    let upper = X.Repo.current_upper t in
+    X.Repo.current_upper t >>= fun upper ->
     let keep_max =
       match keep_max with None -> get_keep_max t.X.Repo.conf | Some b -> b
     in

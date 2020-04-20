@@ -67,7 +67,7 @@ module type STORE = sig
       helpful when a single freeze is called, to check whether it completed or
       not. *)
 
-  val upper_in_use : repo -> string
+  val upper_in_use : repo -> string Lwt.t
   (** [upper_in_use t] returns the name of the upper currently used. *)
 
   (** These modules should not be used. They are exposed purely for testing

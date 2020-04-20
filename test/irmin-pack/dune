@@ -30,16 +30,16 @@
  (libraries irmin-test irmin-pack))
 
 (library
- (name      layered)
- (modules   layered)
+ (name layered)
+ (modules layered)
  (libraries irmin-pack alcotest alcotest-lwt fmt logs logs.fmt))
 
 (library
- (name      concurrent)
- (modules   concurrent)
+ (name concurrent)
+ (modules concurrent)
  (libraries irmin-pack alcotest alcotest-lwt fmt logs logs.fmt common))
 
 (executable
- (name      layered_bench)
- (modules   layered_bench)
+ (name layered_bench)
+ (modules layered_bench)
  (libraries irmin-pack metrics metrics-unix metrics-lwt common logs))

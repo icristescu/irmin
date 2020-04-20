@@ -2,7 +2,8 @@
  (name irmin_test)
  (public_name irmin-test)
  (modules Irmin_test Store Common Layered_store)
- (libraries irmin irmin-layers mtime mtime.clock.os alcotest lwt.unix logs.fmt))
+ (libraries irmin irmin-layers mtime mtime.clock.os alcotest lwt.unix
+   logs.fmt))
 
 (library
  (name irmin_bench)

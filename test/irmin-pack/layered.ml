@@ -380,18 +380,18 @@ module Tezos_Usecase = struct
     let store_name = fresh_name () in
     clean_dir store_name;
     init store_name >>= fun ctxt ->
-    let upper1 = Store.upper_in_use ctxt.index.repo in
+    Store.upper_in_use ctxt.index.repo >>= fun upper1 ->
     Alcotest.(check string "upper1" "upper1" upper1);
     create_block1 ctxt >>= fun (ctxt, block1) ->
     gc ctxt.index block1 >>= fun ctxt ->
-    let upper0 = Store.upper_in_use ctxt.index.repo in
+    Store.upper_in_use ctxt.index.repo >>= fun upper0 ->
     Alcotest.(check string "upper0.1" upper0 Conf.upper_root0);
     checkout_and_create ctxt.index block1 create_block1a
     >>= fun (ctxt, block1a) ->
     Store.Repo.close ctxt.index.repo >>= fun () ->
     Store.Repo.v (config ~readonly:false ~fresh:false store_name)
     >>= fun repo ->
-    let upper0 = Store.upper_in_use repo in
+    Store.upper_in_use repo >>= fun upper0 ->
     Alcotest.(check string "upper0.2" upper0 Conf.upper_root0);
     (Store.Commit.of_hash repo (Store.Commit.hash block1) >>= function
      | None -> Alcotest.fail "no hash found in repo"
@@ -409,8 +409,8 @@ module Tezos_Usecase = struct
     >>= fun () ->
     Store.Repo.close repo >>= fun () ->
     Store.Repo.v (config ~readonly:false ~fresh:false store_name)
-    >|= fun repo ->
-    let upper0 = Store.upper_in_use repo in
+    >>= fun repo ->
+    Store.upper_in_use repo >|= fun upper0 ->
     Alcotest.(check string "upper0.3" upper0 Conf.upper_root0)
 
   let tests =
