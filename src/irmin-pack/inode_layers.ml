@@ -17,93 +17,49 @@
 open Lwt.Infix
 
 let src =
-  Logs.Src.create "irmin.pack.i" ~doc:"inodes for the irmin-pack backend"
+  Logs.Src.create "irmin.pack.i.layers"
+    ~doc:"layered inodes for the irmin-pack backend"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
 module type S = sig
-  include Irmin.CONTENT_ADDRESSABLE_STORE
+  include Inode.S
 
-  type index
+  module U : Pack.S
 
-  module Key : Irmin.Hash.S with type t = key
-
-  module Val : Irmin.Private.Node.S with type t = value and type hash = key
+  type 'a upper = 'a U.t
 
   val v :
+    'a upper ->
     ?fresh:bool ->
     ?readonly:bool ->
     ?lru_size:int ->
     index:index ->
     string ->
-    [ `Read ] t Lwt.t
+    'a t Lwt.t
 
-  val batch : [ `Read ] t -> ([ `Read | `Write ] t -> 'a Lwt.t) -> 'a Lwt.t
+  val batch : unit -> 'a Lwt.t
 
-  type integrity_error = [ `Wrong_hash | `Absent_value ]
+  val project : 'a t -> [ `Read | `Write ] upper -> [ `Read | `Write ] t
 
-  val integrity_check :
-    offset:int64 -> length:int -> key -> 'a t -> (unit, integrity_error) result
+  val layer_id : [ `Read ] t -> key -> int Lwt.t
 
-  val close : 'a t -> unit Lwt.t
-end
-
-module type CONFIG = sig
-  val entries : int
-
-  val stable_hash : int
-end
-
-module T_Maker
-    (H : Irmin.Hash.S)
-    (Node : Irmin.Private.Node.S with type hash = H.t) : sig
-  type hash = H.t
-
-  type step = Node.step
-
-  type metadata = Node.metadata
-
-  val step_t : step Irmin.Type.ty
-
-  val hash_t : hash Irmin.Type.t
-
-  val metadata_t : metadata Irmin.Type.t
-
-  val default : metadata
-
-  type value = Node.value
-
-  val value_t : value Irmin.Type.t
-
-  val pp_hash : hash Fmt.t
-end = struct
-  type hash = H.t
-
-  type step = Node.step
-
-  type metadata = Node.metadata
-
-  let step_t = Node.step_t
-
-  let hash_t = H.t
-
-  let metadata_t = Node.metadata_t
-
-  let default = Node.default
-
-  type value = Node.value
-
-  let value_t = Node.value_t
-
-  let pp_hash = Irmin.Type.(pp hash_t)
+  val freeze : unit -> unit
 end
 
 module Make
-    (Conf : CONFIG)
+    (Conf : Inode.CONFIG)
     (H : Irmin.Hash.S)
-    (Pack : Pack.MAKER with type key = H.t)
-    (Node : Irmin.Private.Node.S with type hash = H.t) =
-struct
+    (Pack : Layered.LAYERED_MAKER
+              with type key = H.t
+               and type index = Pack_index.Make(H).t)
+    (Node : Irmin.Private.Node.S with type hash = H.t) :
+  S
+    with type key = H.t
+     and type Val.metadata = Node.metadata
+     and type Val.step = Node.step
+     and type index = Pack_index.Make(H).t
+     and type U.index = Pack_index.Make(H).t = struct
   type index = Pack.index
 
   module Node = struct
@@ -113,7 +69,7 @@ struct
     let hash = H.hash
   end
 
-  module T = T_Maker (H) (Node)
+  module T = Inode.T_Maker (H) (Node)
 
   module Inode = struct
     module StepMap = struct
@@ -815,6 +771,10 @@ struct
     save t v.Val.v;
     Lwt.return_unit
 
+  module U = Inode.U
+
+  type 'a upper = 'a Inode.upper
+
   let batch = Inode.batch
 
   let v = Inode.v
@@ -824,4 +784,10 @@ struct
   let integrity_check = Inode.integrity_check
 
   let close = Inode.close
+
+  let project = Inode.project
+
+  let layer_id = Inode.layer_id
+
+  let freeze = Inode.freeze
 end

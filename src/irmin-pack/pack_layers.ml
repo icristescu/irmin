@@ -1,37 +1,47 @@
-(*
- * Copyright (c) 2013-2019 Thomas Gazagnaire <thomas@gazagnaire.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- *)
-
-module Pack = Pack
-module Dict = Pack_dict
-module Index = Pack_index
-module IO = IO.Unix
 open Common
 open Lwt.Infix
 
-let src = Logs.Src.create "irmin.pack" ~doc:"irmin-pack backend"
+let src = Logs.Src.create "irmin.pack.layers" ~doc:"irmin-pack backend"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-module Atomic_write = Atomic_write
-
 module type CONFIG = Inode.CONFIG
 
-let config = config
+module Default = struct
+  let lower_root = "lower"
 
-exception RO_Not_Allowed = RO_Not_Allowed
+  let upper_root1 = "upper1"
+
+  let upper_root0 = "upper0"
+end
+
+module Conf = Irmin.Private.Conf
+
+let lower_root_key =
+  Conf.key ~doc:"The root directory for the lower layer." "root_lower"
+    Conf.string Default.lower_root
+
+let lower_root conf = Conf.get conf lower_root_key
+
+let upper_root1_key =
+  Conf.key ~doc:"The root directory for the upper layer." "root_upper"
+    Conf.string Default.upper_root1
+
+let upper_root1 conf = Conf.get conf upper_root1_key
+
+let upper_root0_key =
+  Conf.key ~doc:"The root directory for the secondary upper layer."
+    "root_second" Conf.string Default.upper_root0
+
+let _upper_root0 conf = Conf.get conf upper_root0_key
+
+let config_layers ?(conf = Conf.empty) ?(lower_root = Default.lower_root)
+    ?(upper_root1 = Default.upper_root1) ?(upper_root0 = Default.upper_root0) ()
+    =
+  let config = Conf.add conf lower_root_key lower_root in
+  let config = Conf.add config upper_root0_key upper_root0 in
+  let config = Conf.add config upper_root1_key upper_root1 in
+  config
 
 module Make_ext
     (Config : CONFIG)
@@ -48,6 +58,11 @@ module Make_ext
 struct
   module Index = Pack_index.Make (H)
   module Pack = Pack.File (Index) (H)
+
+  type store_handle =
+    | Commit_t : H.t -> store_handle
+    | Node_t : H.t -> store_handle
+    | Content_t : H.t -> store_handle
 
   module X = struct
     module Hash = H
@@ -87,14 +102,16 @@ struct
           let magic _ = magic
         end)
 
-        include Closeable.Pack (CA_Pack)
+        module CA = Closeable.Pack (CA_Pack)
+        include Layered.Content_addressable (Index) (CA)
       end
 
       include Irmin.Contents.Store (CA)
     end
 
     module Node = struct
-      module CA = Inode.Make (Config) (H) (Pack) (Node)
+      module Pa = Layered.Pack_Maker (H) (Index) (Pack)
+      module CA = Inode_layers.Make (Config) (H) (Pa) (Node)
       include Irmin.Private.Node.Store (Contents) (P) (M) (CA)
     end
 
@@ -123,7 +140,8 @@ struct
           let magic _ = magic
         end)
 
-        include Closeable.Pack (CA_Pack)
+        module CA = Closeable.Pack (CA_Pack)
+        include Layered.Content_addressable (Index) (CA)
       end
 
       include Irmin.Private.Commit.Store (Node) (CA)
@@ -133,7 +151,8 @@ struct
       module Key = B
       module Val = H
       module AW = Atomic_write (Key) (Val)
-      include Closeable.Atomic_write (AW)
+      module U = Closeable.Atomic_write (AW)
+      include Layered.Atomic_write (U)
     end
 
     module Slice = Irmin.Private.Slice.Make (Contents) (Node) (Commit)
@@ -144,46 +163,93 @@ struct
         config : Irmin.Private.Conf.t;
         contents : [ `Read ] Contents.CA.t;
         node : [ `Read ] Node.CA.t;
-        commit : [ `Read ] Commit.CA.t;
         branch : Branch.t;
+        commit : [ `Read ] Commit.CA.t;
+        ucontents : [ `Read ] Contents.CA.U.t;
+        unode : [ `Read ] Node.CA.U.t;
+        ucommit : [ `Read ] Commit.CA.U.t;
+        ubranch : Branch.U.t;
         index : Index.t;
+        uindex : Index.t;
       }
 
-      let contents_t t : 'a Contents.t = t.contents
+      let contents_t t = t.contents
 
-      let node_t t : 'a Node.t = (contents_t t, t.node)
+      let node_t t = (contents_t t, t.node)
 
-      let commit_t t : 'a Commit.t = (node_t t, t.commit)
+      let commit_t t = (node_t t, t.commit)
 
       let branch_t t = t.branch
 
       let batch t f =
-        Commit.CA.batch t.commit (fun commit ->
-            Node.CA.batch t.node (fun node ->
-                Contents.CA.batch t.contents (fun contents ->
-                    let contents : 'a Contents.t = contents in
-                    let node : 'a Node.t = (contents, node) in
-                    let commit : 'a Commit.t = (node, commit) in
+        Commit.CA.U.batch t.ucommit (fun commit ->
+            Node.CA.U.batch t.unode (fun node ->
+                Contents.CA.U.batch t.ucontents (fun contents ->
+                    let contents = Contents.CA.project t.contents contents in
+                    let node = (contents, Node.CA.project t.node node) in
+                    let commit = (node, Commit.CA.project t.commit commit) in
                     f contents node commit)))
 
-      let v config =
+      let v_upper config =
         let root = root config in
+        let root = Filename.concat root (upper_root1 config) in
         let fresh = fresh config in
         let lru_size = lru_size config in
         let readonly = readonly config in
         let log_size = index_log_size config in
         let index = Index.v ~fresh ~readonly ~log_size root in
-        Contents.CA.v ~fresh ~readonly ~lru_size ~index root >>= fun contents ->
-        Node.CA.v ~fresh ~readonly ~lru_size ~index root >>= fun node ->
-        Commit.CA.v ~fresh ~readonly ~lru_size ~index root >>= fun commit ->
-        Branch.v ~fresh ~readonly root >|= fun branch ->
-        { contents; node; commit; branch; config; index }
+        Contents.CA.U.v ~fresh ~readonly ~lru_size ~index root
+        >>= fun ucontents ->
+        Node.CA.U.v ~fresh ~readonly ~lru_size ~index root >>= fun unode ->
+        Commit.CA.U.v ~fresh ~readonly ~lru_size ~index root >>= fun ucommit ->
+        Branch.U.v ~fresh ~readonly root >|= fun ubranch ->
+        (index, ucontents, unode, ucommit, ubranch)
+
+      let v config =
+        v_upper config >>= fun (uindex, ucontents, unode, ucommit, ubranch) ->
+        let root = root config in
+        let root = Filename.concat root (lower_root config) in
+        let fresh = fresh config in
+        let lru_size = lru_size config in
+        let readonly = readonly config in
+        let log_size = index_log_size config in
+        let index = Index.v ~fresh ~readonly ~log_size root in
+        Contents.CA.v ucontents ~fresh ~readonly ~lru_size ~index root
+        >>= fun contents ->
+        Node.CA.v unode ~fresh ~readonly ~lru_size ~index root >>= fun node ->
+        Commit.CA.v ucommit ~fresh ~readonly ~lru_size ~index root
+        >>= fun commit ->
+        Branch.v ubranch ~fresh ~readonly root >|= fun branch ->
+        {
+          contents;
+          node;
+          commit;
+          branch;
+          config;
+          index;
+          ucontents;
+          unode;
+          ucommit;
+          ubranch;
+          uindex;
+        }
 
       let close t =
         Index.close t.index;
+        Index.close t.uindex;
         Contents.CA.close (contents_t t) >>= fun () ->
         Node.CA.close (snd (node_t t)) >>= fun () ->
         Commit.CA.close (snd (commit_t t)) >>= fun () -> Branch.close t.branch
+
+      let layer_id t store_handler =
+        ( match store_handler with
+        | Commit_t k -> Commit.CA.layer_id t.commit k
+        | Node_t k -> Node.CA.layer_id t.node k
+        | Content_t k -> Contents.CA.layer_id t.contents k )
+        >|= function
+        | 1 -> upper_root1 t.config
+        | 2 -> lower_root t.config
+        | _ -> failwith "unexpected layer id"
     end
   end
 
@@ -253,26 +319,8 @@ struct
       else Error (`Corrupted (!nb_corrupted + !nb_absent)) )
 
   include Irmin.Of_private (X)
+
+  let freeze ?min:_ ?max:_ ?squash:_ _repo = Lwt.return_unit
+
+  let layer_id t = X.Repo.layer_id t
 end
-
-module Hash = Irmin.Hash.BLAKE2B
-module Path = Irmin.Path.String_list
-module Metadata = Irmin.Metadata.None
-
-module Make
-    (Config : CONFIG)
-    (M : Irmin.Metadata.S)
-    (C : Irmin.Contents.S)
-    (P : Irmin.Path.S)
-    (B : Irmin.Branch.S)
-    (H : Irmin.Hash.S) =
-struct
-  module XNode = Irmin.Private.Node.Make (H) (P) (M)
-  module XCommit = Irmin.Private.Commit.Make (H)
-  include Make_ext (Config) (M) (C) (P) (B) (H) (XNode) (XCommit)
-end
-
-module KV (Config : CONFIG) (C : Irmin.Contents.S) =
-  Make (Config) (Metadata) (C) (Path) (Irmin.Branch.String) (Hash)
-module Stats = Stats
-module Make_layered = Pack_layers.Make_ext
