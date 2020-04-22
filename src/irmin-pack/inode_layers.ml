@@ -27,6 +27,8 @@ module type S = sig
 
   module U : Pack.S
 
+  module L : Pack.S
+
   type 'a upper = 'a U.t
 
   val v :
@@ -44,7 +46,25 @@ module type S = sig
 
   val layer_id : [ `Read ] t -> key -> int Lwt.t
 
-  val freeze : unit -> unit
+  val copy :
+    [ `Read ] t ->
+    dst:[ `Read | `Write ] L.t ->
+    aux:(value -> unit Lwt.t) ->
+    string ->
+    key ->
+    unit Lwt.t
+
+  val check_and_copy :
+    [ `Read ] t ->
+    dst:[ `Read | `Write ] L.t ->
+    aux:(value -> unit Lwt.t) ->
+    string ->
+    key ->
+    unit Lwt.t
+
+  val batch_lower : 'a t -> ([ `Read | `Write ] L.t -> 'b Lwt.t) -> 'b Lwt.t
+
+  val mem_lower : 'a t -> key -> bool Lwt.t
 end
 
 module Make
@@ -772,6 +792,7 @@ module Make
     Lwt.return_unit
 
   module U = Inode.U
+  module L = Inode.L
 
   type 'a upper = 'a Inode.upper
 
@@ -789,5 +810,37 @@ module Make
 
   let layer_id = Inode.layer_id
 
-  let freeze = Inode.freeze
+  let batch_lower = Inode.batch_lower
+
+  let mem_lower = Inode.mem_lower
+
+  let lift t v =
+    let v = Inode.Val.of_bin v in
+    let find = unsafe_find t in
+    { Val.find; v }
+
+  let copy t ~dst ~aux str k =
+    let add k v = Inode.L.unsafe_append dst k v in
+    let mem k = Inode.L.unsafe_mem dst k in
+    Inode.U.find (Inode.upper t) k >>= function
+    | None -> Lwt.return_unit
+    | Some v ->
+        let v' = lift t v in
+        aux v' >>= fun () ->
+        Inode.Val.save ~add ~mem v'.Val.v;
+        let k' = hash v' in
+        if not (Irmin.Type.equal H.t k k') then
+          Fmt.kstrf
+            (fun x -> Lwt.fail (Layered.Copy_error x))
+            "%s import error: expected %a, got %a" str
+            Irmin.Type.(pp H.t)
+            k
+            Irmin.Type.(pp H.t)
+            k'
+        else Lwt.return_unit
+
+  let check_and_copy t ~dst ~aux str k =
+    mem_lower t k >>= function
+    | true -> Lwt.return_unit
+    | false -> copy t ~dst ~aux str k
 end

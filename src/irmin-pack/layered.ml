@@ -26,6 +26,8 @@ module type LAYERED_S = sig
 
   module U : Pack.S
 
+  module L : Pack.S
+
   type 'a upper = 'a U.t
 
   val v :
@@ -43,85 +45,168 @@ module type LAYERED_S = sig
 
   val layer_id : [ `Read ] t -> key -> int Lwt.t
 
-  val freeze : unit -> unit
+  val copy :
+    [ `Read ] t ->
+    dst:[ `Read | `Write ] L.t ->
+    aux:(value -> unit Lwt.t) ->
+    string ->
+    key ->
+    unit Lwt.t
+
+  val check_and_copy :
+    [ `Read ] t ->
+    dst:[ `Read | `Write ] L.t ->
+    aux:(value -> unit Lwt.t) ->
+    string ->
+    key ->
+    unit Lwt.t
+
+  val batch_lower : 'a t -> ([ `Read | `Write ] L.t -> 'b Lwt.t) -> 'b Lwt.t
+
+  val mem_lower : 'a t -> key -> bool Lwt.t
+
+  val upper : 'a t -> 'a U.t
+
+  val lower : 'a t -> [ `Read ] L.t
+end
+
+module type CA = sig
+  include Pack.S
+
+  module Key : Irmin.Hash.TYPED with type t = key and type value = value
+end
+
+exception Copy_error of string
+
+module Copy
+    (Key : Irmin.Hash.S)
+    (SRC : Pack.S with type key = Key.t)
+    (DST : Pack.S with type key = SRC.key and type value = SRC.value) =
+struct
+  let add_to_dst name add dk (k, v) =
+    add v >>= fun k' ->
+    if not (Irmin.Type.equal dk k k') then
+      Fmt.kstrf
+        (fun x -> Lwt.fail (Copy_error x))
+        "%s import error: expected %a, got %a" name
+        Irmin.Type.(pp dk)
+        k
+        Irmin.Type.(pp dk)
+        k'
+    else Lwt.return_unit
+
+  let already_in_dst ~dst k =
+    DST.mem dst k >|= function
+    | true ->
+        Log.debug (fun l -> l "already in dst %a" (Irmin.Type.pp Key.t) k);
+        true
+    | false -> false
+
+  let copy ~src ~dst ~aux str k =
+    Log.debug (fun l -> l "copy %s %a" str (Irmin.Type.pp Key.t) k);
+    SRC.find src k >>= function
+    | None -> Lwt.return_unit
+    | Some v -> aux v >>= fun () -> add_to_dst str (DST.add dst) Key.t (k, v)
+
+  let check_and_copy ~src ~dst ~aux str k =
+    already_in_dst ~dst k >>= function
+    | true -> Lwt.return_unit
+    | false -> copy ~src ~dst ~aux str k
 end
 
 module Content_addressable
+    (H : Irmin.Hash.S)
     (Index : Pack_index.S)
-    (S : Pack.S with type index = Index.t) :
+    (S : Pack.S with type index = Index.t and type key = H.t) :
   LAYERED_S
     with type key = S.key
      and type value = S.value
      and type index = S.index
-     and module U = S = struct
+     and module U = S
+     and type L.key = S.key
+     and type L.value = S.value = struct
   type index = S.index
 
   type key = S.key
 
   type value = S.value
 
-  type 'a upper = 'a S.t
-
-  type 'a t = { upper : 'a upper; lower : [ `Read ] S.t }
-
   module U = S
+  module L = S
+
+  type 'a upper = 'a U.t
+
+  type 'a t = { upper : 'a upper; lower : [ `Read ] L.t }
+
+  let batch_lower t f = L.batch t.lower f
+
+  let mem_lower t k = L.mem t.lower k
 
   let v upper ?fresh ?readonly ?lru_size ~index root =
-    S.v ?fresh ?readonly ?lru_size ~index root >|= fun lower -> { upper; lower }
+    L.v ?fresh ?readonly ?lru_size ~index root >|= fun lower -> { upper; lower }
 
-  let add t = S.add t.upper
+  let add t = U.add t.upper
 
-  let unsafe_add t = S.unsafe_add t.upper
+  let unsafe_add t = U.unsafe_add t.upper
 
-  let unsafe_append t k v = S.unsafe_append t.upper k v
+  let unsafe_append t k v = U.unsafe_append t.upper k v
 
   let find t k =
-    S.find t.upper k >>= function
-    | None -> S.find t.lower k
+    U.find t.upper k >>= function
+    | None -> L.find t.lower k
     | Some v -> Lwt.return_some v
 
   let unsafe_find t k =
-    match S.unsafe_find t.upper k with
-    | None -> S.unsafe_find t.lower k
+    match U.unsafe_find t.upper k with
+    | None -> L.unsafe_find t.lower k
     | Some v -> Some v
 
   let mem t k =
-    S.mem t.upper k >>= function
+    U.mem t.upper k >>= function
     | true -> Lwt.return_true
-    | false -> S.mem t.lower k
+    | false -> L.mem t.lower k
 
-  let unsafe_mem t k = S.unsafe_mem t.upper k || S.unsafe_mem t.lower k
+  let unsafe_mem t k = U.unsafe_mem t.upper k || L.unsafe_mem t.lower k
 
   let project t upper = { t with upper }
 
   let batch () = failwith "don't call this function"
 
   let sync t =
-    S.sync t.upper;
-    S.sync t.lower
+    U.sync t.upper;
+    L.sync t.lower
 
-  let close t = S.close t.upper >>= fun () -> S.close t.lower
+  let close t = U.close t.upper >>= fun () -> L.close t.lower
 
-  type integrity_error = S.integrity_error
+  type integrity_error = U.integrity_error
 
   let integrity_check ~offset ~length k t =
     let upper = t.upper in
     let lower = t.lower in
     match
-      ( S.integrity_check ~offset ~length k upper,
-        S.integrity_check ~offset ~length k lower )
+      ( U.integrity_check ~offset ~length k upper,
+        L.integrity_check ~offset ~length k lower )
     with
     | Ok (), Ok () -> Ok ()
     | Error `Wrong_hash, _ | _, Error `Wrong_hash -> Error `Wrong_hash
     | Error `Absent_value, _ | _, Error `Absent_value -> Error `Absent_value
 
-  let freeze () = ()
-
   let layer_id t k =
-    S.mem t.upper k >>= function
+    U.mem t.upper k >>= function
     | true -> Lwt.return 1
     | false -> (
-        S.mem t.lower k >|= function true -> 2 | false -> raise Not_found )
+        L.mem t.lower k >|= function true -> 2 | false -> raise Not_found )
+
+  module Copy = Copy (H) (U) (S)
+
+  let check_and_copy t ~dst ~aux str k =
+    Copy.check_and_copy ~src:t.upper ~dst ~aux str k
+
+  let copy t ~dst ~aux str k = Copy.copy ~src:t.upper ~dst ~aux str k
+
+  let upper t = t.upper
+
+  let lower t = t.lower
 end
 
 module type LAYERED_MAKER = sig
@@ -135,6 +220,10 @@ module type LAYERED_MAKER = sig
        and type value = V.t
        and type index = index
        and type U.index = index
+       and type U.key = key
+       and type L.key = key
+       and type U.value = V.t
+       and type L.value = V.t
 end
 
 module Pack_Maker
@@ -148,7 +237,7 @@ module Pack_Maker
 
   module Make (V : Pack.ELT with type hash := key) = struct
     module Upper = S.Make (V)
-    include Content_addressable (Index) (Upper)
+    include Content_addressable (H) (Index) (Upper)
   end
 end
 
@@ -158,10 +247,12 @@ module type AW = sig
   val v : ?fresh:bool -> ?readonly:bool -> string -> t Lwt.t
 end
 
-module Atomic_write (A : AW) : sig
+module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
   include AW with type key = A.key and type value = A.value
 
   val v : A.t -> ?fresh:bool -> ?readonly:bool -> string -> t Lwt.t
+
+  val copy : t -> (value -> bool Lwt.t) -> unit Lwt.t
 end = struct
   type key = A.key
 
@@ -216,4 +307,20 @@ end = struct
 
   let v upper ?fresh ?readonly file =
     A.v ?fresh ?readonly file >|= fun lower -> { upper; lower }
+
+  (** Do not copy branches that point to commits not copied. *)
+  let copy t commit_exists_lower =
+    U.list t.upper >>= fun branches ->
+    Lwt_list.iter_p
+      (fun branch ->
+        U.find t.upper branch >>= function
+        | None -> Lwt.fail_with "branch not found in previous upper"
+        | Some hash -> (
+            commit_exists_lower hash >>= function
+            | true ->
+                Log.debug (fun l ->
+                    l "[branches] copy to lower %a" (Irmin.Type.pp K.t) branch);
+                A.set t.lower branch hash
+            | false -> Lwt.return_unit ))
+      branches
 end

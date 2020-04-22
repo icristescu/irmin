@@ -103,7 +103,7 @@ struct
         end)
 
         module CA = Closeable.Pack (CA_Pack)
-        include Layered.Content_addressable (Index) (CA)
+        include Layered.Content_addressable (H) (Index) (CA)
       end
 
       include Irmin.Contents.Store (CA)
@@ -141,7 +141,7 @@ struct
         end)
 
         module CA = Closeable.Pack (CA_Pack)
-        include Layered.Content_addressable (Index) (CA)
+        include Layered.Content_addressable (H) (Index) (CA)
       end
 
       include Irmin.Private.Commit.Store (Node) (CA)
@@ -152,7 +152,7 @@ struct
       module Val = H
       module AW = Atomic_write (Key) (Val)
       module U = Closeable.Atomic_write (AW)
-      include Layered.Atomic_write (U)
+      include Layered.Atomic_write (Key) (U)
     end
 
     module Slice = Irmin.Private.Slice.Make (Contents) (Node) (Commit)
@@ -320,7 +320,91 @@ struct
 
   include Irmin.Of_private (X)
 
-  let freeze ?min:_ ?max:_ ?squash:_ _repo = Lwt.return_unit
+  module Copy = struct
+    let copy_branches t =
+      let commit_exists_lower = X.Commit.CA.mem_lower t.X.Repo.commit in
+      X.Branch.copy t.X.Repo.branch commit_exists_lower
+
+    let copy_contents contents t k =
+      X.Contents.CA.check_and_copy t.X.Repo.contents ~dst:contents
+        ~aux:(fun _ -> Lwt.return_unit)
+        "Contents" k
+
+    let copy_tree ?(skip = fun _ -> Lwt.return_false) nodes contents t root =
+      X.Node.CA.mem_lower t.X.Repo.node root >>= function
+      | true -> Lwt.return_unit
+      | false ->
+          let aux v =
+            Lwt_list.iter_p
+              (function
+                | _, `Contents (k, _) -> copy_contents contents t k
+                | _ -> Lwt.return_unit)
+              (X.Node.Val.list v)
+          in
+          let node k =
+            X.Node.CA.check_and_copy t.X.Repo.node ~dst:nodes ~aux "Node" k
+          in
+          Repo.iter t ~min:[] ~max:[ root ] ~node ~skip
+
+    let copy_commit ~copy_tree commits nodes contents t k =
+      let aux c = copy_tree nodes contents t (X.Commit.Val.node c) in
+      X.Commit.CA.check_and_copy t.X.Repo.commit ~dst:commits ~aux "Commit" k
+
+    module CopyToLower = struct
+      let copy_tree nodes contents t root =
+        let skip k = X.Node.CA.mem_lower t.X.Repo.node k in
+        copy_tree ~skip nodes contents t root
+
+      let copy_commit commits nodes contents t k =
+        copy_commit ~copy_tree commits nodes contents t k
+
+      let batch_lower t f =
+        X.Commit.CA.batch_lower t.X.Repo.commit (fun commits ->
+            X.Node.CA.batch_lower t.X.Repo.node (fun nodes ->
+                X.Contents.CA.batch_lower t.X.Repo.contents (fun contents ->
+                    f commits nodes contents)))
+
+      let copy_max_commits t (max : commit list) =
+        Log.debug (fun f -> f "copy max commits to lower");
+        Lwt_list.iter_p
+          (fun k ->
+            let h = Commit.hash k in
+            batch_lower t (fun commits nodes contents ->
+                copy_commit commits nodes contents t h))
+          max
+
+      let copy_slice t slice =
+        batch_lower t (fun commits nodes contents ->
+            X.Slice.iter slice (function
+              | `Commit (k, _) -> copy_commit commits nodes contents t k
+              | _ -> Lwt.return_unit))
+
+      let copy t ~min ~(max : commit list) () =
+        Log.debug (fun f -> f "copy to lower");
+        Repo.export ~full:false ~min ~max:(`Max max) t >>= copy_slice t
+    end
+  end
+
+  let copy t ~squash ~min ~max () =
+    Log.debug (fun f -> f "copy");
+    (match max with [] -> Repo.heads t | m -> Lwt.return m) >>= fun max ->
+    Lwt.catch
+      (fun () ->
+        (* Copy commits to lower: if squash then copy only the max commits *)
+        ( if squash then Copy.CopyToLower.copy_max_commits t max
+        else Copy.CopyToLower.copy t ~min ~max () )
+        (* Copy branches to both lower and current_upper *)
+        >>= fun () ->
+        Copy.copy_branches t >|= fun () -> Ok ())
+      (function
+        | Layered.Copy_error e -> Lwt.return_error (`Msg e)
+        | e -> Fmt.kstrf Lwt.fail_invalid_arg "copy error: %a" Fmt.exn e)
+
+  let freeze ?(min : commit list = []) ?(max : commit list = [])
+      ?(squash = false) t =
+    copy t ~squash ~min ~max () >>= function
+    | Ok () -> Lwt.return_unit
+    | Error (`Msg e) -> Fmt.kstrf Lwt.fail_with "[gc_store]: import error %s" e
 
   let layer_id t = X.Repo.layer_id t
 end
