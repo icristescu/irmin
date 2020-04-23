@@ -23,7 +23,7 @@ module Conf = struct
 
   let upper_root0 = "0"
 
-  let _keep_max = true
+  let keep_max = true
 end
 
 module Hash = Irmin.Hash.SHA1
@@ -38,16 +38,10 @@ module StoreSimple =
     (Irmin.Branch.String)
     (Hash)
 
-(*let config ?(readonly = false) ?(fresh = true) ?(keep_max = Conf.keep_max)
+let config ?(readonly = false) ?(fresh = true) ?(keep_max = Conf.keep_max)
     ?(lower_root = Conf.lower_root) ?(upper_root0 = Conf.upper_root0) root =
   let conf = Irmin_pack.config ~readonly ?index_log_size ~fresh root in
   Irmin_pack.config_layers ~conf ~keep_max ~lower_root ~upper_root0 ()
-*)
-
-let config ?(readonly = false) ?(fresh = true) ?(lower_root = Conf.lower_root)
-    ?(upper_root0 = Conf.upper_root0) root =
-  let conf = Irmin_pack.config ~readonly ?index_log_size ~fresh root in
-  Irmin_pack.config_layers ~conf ~lower_root ~upper_root0 ()
 
 let random_char () = char_of_int (33 + Random.int 94)
 
@@ -195,11 +189,11 @@ module Test = struct
         Alcotest.(check (option string)) "nov" (Some "Novembre") novembre;
         get ctxt [ "a"; "c" ] >>= fun juin ->
         Alcotest.(check (option string)) "juin" (Some "Juin") juin;
-        (* ( if not (Store.async_freeze ()) then *)
-        (checkout ctxt.index block1b >>= function
-         | None -> Lwt.return_unit
-         | Some _ -> Alcotest.fail "should not find block1b")
-        (* else Lwt.return_unit ) *)
+        ( if not (Store.async_freeze ()) then
+          checkout ctxt.index block1b >>= function
+          | None -> Lwt.return_unit
+          | Some _ -> Alcotest.fail "should not find block1b"
+        else Lwt.return_unit )
         >>= fun () ->
         checkout ctxt.index block1a >>= function
         | None -> Alcotest.fail "checkout block1a"
@@ -252,11 +246,11 @@ module Test = struct
         | Some ctxt ->
             get ctxt [ "a"; "b" ] >>= fun fevr ->
             Alcotest.(check (option string)) "fevrier" (Some "Février") fevr;
-            (* ( if not (Store.async_freeze ()) then *)
-            (checkout ctxt.index block1b >|= function
-             | None -> ()
-             | Some _ -> Alcotest.fail "should not find block1b")
-            (* else Lwt.return_unit ) *)
+            ( if not (Store.async_freeze ()) then
+              checkout ctxt.index block1b >|= function
+              | None -> ()
+              | Some _ -> Alcotest.fail "should not find block1b"
+            else Lwt.return_unit )
             >>= fun () ->
             Lwt_list.iter_s
               (fun (k, v, block) -> check_large_blocks ctxt.index block k v)
@@ -273,7 +267,7 @@ module Test = struct
     >>= fun repo ->
     create_block1 ctxt >>= fun (ctxt, block1) ->
     gc ctxt.index block1 >>= fun ctxt ->
-    (* Store.PrivateLayer.wait_for_freeze () >>= fun () -> *)
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
     Store.Repo.close ctxt.index.repo >>= fun () ->
     let hash1 = Store.Commit.hash block1 in
     (StoreSimple.Commit.of_hash repo hash1 >>= function
@@ -301,7 +295,7 @@ module Test = struct
          Store.Tree.find tree [ "a"; "b" ] >|= fun novembre ->
          Alcotest.(check (option string)) "nov" (Some "Novembre") novembre)
     >>= fun () ->
-    (* Store.PrivateLayer.wait_for_freeze () >>= fun () -> *)
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
     (Store.Commit.of_hash repo (Store.Commit.hash block1) >>= function
      | None -> Alcotest.fail "no hash found in repo"
      | Some commit ->
@@ -328,7 +322,7 @@ module Test = struct
     check_block >>= fun () ->
     gc ctxt.index block1 >>= fun ctxt ->
     check_block >>= fun () ->
-    (* Store.PrivateLayer.wait_for_freeze () >>= fun () -> *)
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
     check_block >>= fun () ->
     checkout_and_create ctxt.index block1 create_block1a
     >>= fun (ctxt, block1a) ->
@@ -375,14 +369,14 @@ module Test = struct
       Alcotest.(check (option string)) "juin" (Some "Juin") juin
     in
     gc ctxt.index block1a >>= fun ctxt ->
-    (* Store.PrivateLayer.wait_for_freeze () >>= fun () -> *)
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
     Store.Commit.of_hash repo (Store.Commit.hash block1a) >>= function
     | None -> Alcotest.fail "no hash found in repo"
     | Some commit ->
         let tree = Store.Commit.tree commit in
         check_block1 tree >>= fun () ->
         gc ctxt.index block1a >>= fun ctxt ->
-        (* Store.PrivateLayer.wait_for_freeze () >>= fun () -> *)
+        Store.PrivateLayer.wait_for_freeze () >>= fun () ->
         check_block3 tree >>= fun () ->
         Store.Repo.close ctxt.index.repo >>= fun () -> Store.Repo.close repo
 
@@ -390,8 +384,8 @@ module Test = struct
     let store_name = fresh_name () in
     clean_dir store_name;
     init store_name >>= fun ctxt ->
-    (* let upper1 = Store.upper_in_use ctxt.index.repo in
-       Alcotest.(check string "upper1" "upper1" upper1);*)
+    let upper1 = Store.upper_in_use ctxt.index.repo in
+    Alcotest.(check string "upper1" "upper1" upper1);
     create_block1 ctxt >>= fun (ctxt, block1) ->
     gc ctxt.index block1 >>= fun ctxt ->
     (* let upper0 = Store.upper_in_use ctxt.index.repo in

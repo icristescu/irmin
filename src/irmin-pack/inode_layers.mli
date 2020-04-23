@@ -25,30 +25,32 @@ module type S = sig
 
   val v :
     'a upper ->
+    'a upper ->
     ?fresh:bool ->
     ?readonly:bool ->
     ?lru_size:int ->
     index:index ->
     string ->
+    Lwt_mutex.t ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
 
-  val project : 'a t -> [ `Read | `Write ] upper -> [ `Read | `Write ] t
+  val project :
+    'a t ->
+    [ `Read | `Write ] upper ->
+    [ `Read | `Write ] upper ->
+    [ `Read | `Write ] t
 
   val layer_id : [ `Read ] t -> key -> int Lwt.t
 
-  val copy :
-    [ `Read ] t ->
-    dst:[ `Read | `Write ] L.t ->
-    aux:(value -> unit Lwt.t) ->
-    string ->
-    key ->
-    unit Lwt.t
+  type 'a layer_type =
+    | Upper : [ `Read | `Write ] U.t layer_type
+    | Lower : [ `Read | `Write ] L.t layer_type
 
   val check_and_copy :
+    'l layer_type * 'l ->
     [ `Read ] t ->
-    dst:[ `Read | `Write ] L.t ->
     aux:(value -> unit Lwt.t) ->
     string ->
     key ->
@@ -57,6 +59,12 @@ module type S = sig
   val batch_lower : 'a t -> ([ `Read | `Write ] L.t -> 'b Lwt.t) -> 'b Lwt.t
 
   val mem_lower : 'a t -> key -> bool Lwt.t
+
+  val mem_current : [> `Read ] t -> key -> bool Lwt.t
+
+  val flip_upper : 'a t -> unit
+
+  val current_upper : 'a t -> 'a U.t
 end
 
 module Make

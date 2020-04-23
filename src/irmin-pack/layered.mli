@@ -11,30 +11,34 @@ module type LAYERED_S = sig
 
   val v :
     'a upper ->
+    'a upper ->
     ?fresh:bool ->
     ?readonly:bool ->
     ?lru_size:int ->
     index:index ->
     string ->
+    Lwt_mutex.t ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
 
-  val project : 'a t -> [ `Read | `Write ] upper -> [ `Read | `Write ] t
+  val unsafe_append : 'a t -> key -> value -> unit Lwt.t
+
+  val project :
+    'a t ->
+    [ `Read | `Write ] upper ->
+    [ `Read | `Write ] upper ->
+    [ `Read | `Write ] t
 
   val layer_id : [ `Read ] t -> key -> int Lwt.t
 
-  val copy :
-    [ `Read ] t ->
-    dst:[ `Read | `Write ] L.t ->
-    aux:(value -> unit Lwt.t) ->
-    string ->
-    key ->
-    unit Lwt.t
+  type 'a layer_type =
+    | Upper : [ `Read | `Write ] U.t layer_type
+    | Lower : [ `Read | `Write ] L.t layer_type
 
   val check_and_copy :
+    'l layer_type * 'l ->
     [ `Read ] t ->
-    dst:[ `Read | `Write ] L.t ->
     aux:(value -> unit Lwt.t) ->
     string ->
     key ->
@@ -44,9 +48,15 @@ module type LAYERED_S = sig
 
   val mem_lower : 'a t -> key -> bool Lwt.t
 
-  val upper : 'a t -> 'a U.t
+  val mem_current : [> `Read ] t -> key -> bool Lwt.t
+
+  val current_upper : 'a t -> 'a U.t
+
+  val previous_upper : 'a t -> 'a U.t
 
   val lower : 'a t -> [ `Read ] L.t
+
+  val flip_upper : 'a t -> unit
 end
 
 module Content_addressable
@@ -70,9 +80,22 @@ end
 module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
   include AW with type key = A.key and type value = A.value
 
-  val v : A.t -> ?fresh:bool -> ?readonly:bool -> string -> t Lwt.t
+  val v :
+    A.t ->
+    A.t ->
+    ?fresh:bool ->
+    ?readonly:bool ->
+    string ->
+    Lwt_mutex.t ->
+    t Lwt.t
 
-  val copy : t -> (value -> bool Lwt.t) -> unit Lwt.t
+  val copy :
+    t ->
+    mem_commit_lower:(value -> bool Lwt.t) ->
+    mem_commit_upper:(value -> bool Lwt.t) ->
+    unit Lwt.t
+
+  val flip_upper : t -> unit
 end
 
 module type LAYERED_MAKER = sig

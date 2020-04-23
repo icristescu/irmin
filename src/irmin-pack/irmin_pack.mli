@@ -115,6 +115,7 @@ val config_layers :
   ?lower_root:string ->
   ?upper_root1:string ->
   ?upper_root0:string ->
+  ?keep_max:bool ->
   unit ->
   Irmin.config
 

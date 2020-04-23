@@ -21,7 +21,13 @@ module type S = sig
   include Irmin.S
 
   val freeze :
-    ?min:commit list -> ?max:commit list -> ?squash:bool -> repo -> unit Lwt.t
+    ?min:commit list ->
+    ?max:commit list ->
+    ?squash:bool ->
+    ?keep_max:bool ->
+    ?heads:commit list ->
+    repo ->
+    unit Lwt.t
 
   type store_handle =
     | Commit_t : hash -> store_handle
@@ -29,6 +35,30 @@ module type S = sig
     | Content_t : hash -> store_handle
 
   val layer_id : repo -> store_handle -> string Lwt.t
+
+  val async_freeze : unit -> bool
+
+  val upper_in_use : repo -> string
+
+  module PrivateLayer : sig
+    module Hook : sig
+      type 'a t
+
+      val v : ('a -> unit Lwt.t) -> 'a t
+    end
+
+    val wait_for_freeze : unit -> unit Lwt.t
+
+    val freeze_with_hook :
+      ?min:commit list ->
+      ?max:commit list ->
+      ?squash:bool ->
+      ?keep_max:bool ->
+      ?heads:commit list ->
+      ?hook:[ `After_Clear | `Before_Clear | `Before_Copy ] Hook.t ->
+      repo ->
+      unit Lwt.t
+  end
 end
 
 module Make_ext
@@ -139,7 +169,8 @@ struct
 
   include Irmin.Of_private (X)
 
-  let freeze ?min:_ ?max:_ ?squash:_ _repo = Lwt.fail_with "not implemented"
+  let freeze ?min:_ ?max:_ ?squash:_ ?keep_max:_ ?heads:_ _repo =
+    Lwt.fail_with "not implemented"
 
   type store_handle =
     | Commit_t : hash -> store_handle
@@ -147,6 +178,24 @@ struct
     | Content_t : hash -> store_handle
 
   let layer_id _repo _store_handle = Lwt.fail_with "not implemented"
+
+  let async_freeze _ = failwith "not implemented"
+
+  let upper_in_use _repo = failwith "not implemented"
+
+  module PrivateLayer = struct
+    module Hook = struct
+      type 'a t = unit
+
+      let v _ = failwith "not implemented"
+    end
+
+    let wait_for_freeze _ = Lwt.fail_with "not implemented"
+
+    let freeze_with_hook ?min:_ ?max:_ ?squash:_ ?keep_max:_ ?heads:_ ?hook:_
+        _repo =
+      Lwt.fail_with "not implemented"
+  end
 end
 
 module type S_MAKER = functor

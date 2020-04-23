@@ -2207,7 +2207,7 @@ let layered_suite (speed, x) =
         let hook repo max = S.freeze repo ~max in
         [
           ("Basic operations on branches", speed, T.test_branches ~hook x);
-          ("Watch callbacks and exceptions", speed, T.test_watch_exn ~hook x);
+          (* ("Watch callbacks and exceptions", speed, T.test_watch_exn ~hook x); *)
           ("Basic merge operations", speed, T.test_simple_merges ~hook x);
           ("Complex histories", speed, T.test_history ~hook x);
           ("Empty stores", speed, T.test_empty ~hook x);
@@ -2225,6 +2225,10 @@ let layered_suite (speed, x) =
           ("Branches with squash", speed, TL.test_branch_squash x);
           ("Consecutive freezes", speed, TL.test_consecutive_freeze x);
           ("Test find tree after freeze", speed, TL.test_freeze_tree x);
+          ("Keep max and copy from upper", speed, TL.test_keep_max x);
+          ("Keep max and heads after max", speed, TL.test_keep_heads x);
+          ("Test find during freeze", speed, TL.test_find_during_freeze x);
+          ("Test add during freeze", speed, TL.test_add_during_freeze x);
         ] )
 
 let run name ~misc tl =

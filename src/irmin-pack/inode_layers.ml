@@ -33,30 +33,32 @@ module type S = sig
 
   val v :
     'a upper ->
+    'a upper ->
     ?fresh:bool ->
     ?readonly:bool ->
     ?lru_size:int ->
     index:index ->
     string ->
+    Lwt_mutex.t ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
 
-  val project : 'a t -> [ `Read | `Write ] upper -> [ `Read | `Write ] t
+  val project :
+    'a t ->
+    [ `Read | `Write ] upper ->
+    [ `Read | `Write ] upper ->
+    [ `Read | `Write ] t
 
   val layer_id : [ `Read ] t -> key -> int Lwt.t
 
-  val copy :
-    [ `Read ] t ->
-    dst:[ `Read | `Write ] L.t ->
-    aux:(value -> unit Lwt.t) ->
-    string ->
-    key ->
-    unit Lwt.t
+  type 'a layer_type =
+    | Upper : [ `Read | `Write ] U.t layer_type
+    | Lower : [ `Read | `Write ] L.t layer_type
 
   val check_and_copy :
+    'l layer_type * 'l ->
     [ `Read ] t ->
-    dst:[ `Read | `Write ] L.t ->
     aux:(value -> unit Lwt.t) ->
     string ->
     key ->
@@ -65,6 +67,12 @@ module type S = sig
   val batch_lower : 'a t -> ([ `Read | `Write ] L.t -> 'b Lwt.t) -> 'b Lwt.t
 
   val mem_lower : 'a t -> key -> bool Lwt.t
+
+  val mem_current : [> `Read ] t -> key -> bool Lwt.t
+
+  val flip_upper : 'a t -> unit
+
+  val current_upper : 'a t -> 'a U.t
 end
 
 module Make
@@ -598,20 +606,28 @@ module Make
 
       let add ~find t s v = add ~find ~copy:true t s v
 
-      let save ~add ~mem t =
+      let save :
+          add:(hash -> Bin.t -> unit Lwt.t) ->
+          mem:(hash -> bool) ->
+          t ->
+          unit Lwt.t =
+       fun ~add ~mem t ->
         let rec aux ~seed t =
           Log.debug (fun l -> l "save seed:%d" seed);
           match t.v with
           | Values _ -> add (Lazy.force t.hash) (to_bin t)
           | Inodes n ->
-              Array.iter
-                (function
-                  | Empty | Inode { tree = None; _ } -> ()
-                  | Inode ({ tree = Some t; _ } as i) ->
-                      let hash = hash_of_inode i in
-                      if mem hash then () else aux ~seed:(seed + 1) t)
-                n.entries;
-              add (Lazy.force t.hash) (to_bin t)
+              let entries =
+                Array.fold_left
+                  (fun acc entry ->
+                    match entry with
+                    | Empty | Inode { tree = None; _ } -> acc
+                    | Inode ({ tree = Some t; _ } as i) ->
+                        let hash = hash_of_inode i in
+                        if mem hash then acc else aux ~seed:(seed + 1) t :: acc)
+                  [] n.entries
+              in
+              Lwt.join entries >>= fun () -> add (Lazy.force t.hash) (to_bin t)
         in
         aux ~seed:0 t
     end
@@ -776,9 +792,7 @@ module Make
 
   let hash v = Lazy.force v.Val.v.Inode.Val.hash
 
-  let add t v =
-    save t v.Val.v;
-    Lwt.return (hash v)
+  let add t v = save t v.Val.v >>= fun () -> Lwt.return (hash v)
 
   let check_hash expected got =
     if Irmin.Type.equal H.t expected got then ()
@@ -788,8 +802,7 @@ module Make
 
   let unsafe_add t k v =
     check_hash k (hash v);
-    save t v.Val.v;
-    Lwt.return_unit
+    save t v.Val.v
 
   module U = Inode.U
   module L = Inode.L
@@ -814,22 +827,30 @@ module Make
 
   let mem_lower = Inode.mem_lower
 
+  let mem_current = Inode.mem_current
+
   let clear = Inode.clear
+
+  let flip_upper = Inode.flip_upper
+
+  let current_upper = Inode.current_upper
+
+  type 'a layer_type =
+    | Upper : [ `Read | `Write ] U.t layer_type
+    | Lower : [ `Read | `Write ] L.t layer_type
 
   let lift t v =
     let v = Inode.Val.of_bin v in
     let find = unsafe_find t in
     { Val.find; v }
 
-  let copy t ~dst ~aux str k =
-    let add k v = Inode.L.unsafe_append dst k v in
-    let mem k = Inode.L.unsafe_mem dst k in
-    Inode.U.find (Inode.upper t) k >>= function
+  let copy ~add ~mem ~aux t str k =
+    Inode.U.find (Inode.previous_upper t) k >>= function
     | None -> Lwt.return_unit
     | Some v ->
         let v' = lift t v in
         aux v' >>= fun () ->
-        Inode.Val.save ~add ~mem v'.Val.v;
+        Inode.Val.save ~add ~mem v'.Val.v >>= fun () ->
         let k' = hash v' in
         if not (Irmin.Type.equal H.t k k') then
           Fmt.kstrf
@@ -841,8 +862,38 @@ module Make
             k'
         else Lwt.return_unit
 
-  let check_and_copy t ~dst ~aux str k =
+  let check_and_copy_to_lower t ~dst ~aux str k =
     mem_lower t k >>= function
     | true -> Lwt.return_unit
-    | false -> copy t ~dst ~aux str k
+    | false ->
+        let add k v =
+          Inode.L.unsafe_append dst k v;
+          Lwt.return_unit
+        in
+        let mem k = Inode.L.unsafe_mem dst k in
+        copy ~add ~mem ~aux t str k
+
+  let check_and_copy_to_current t ~dst ~aux str k =
+    mem_current t k >>= function
+    | true -> Lwt.return_unit
+    | false ->
+        let add k v =
+          Inode.U.unsafe_append dst k v;
+          Lwt.return_unit
+        in
+        let mem k = Inode.U.unsafe_mem dst k in
+        copy ~add ~mem ~aux t str k
+
+  let check_and_copy :
+      type l.
+      l layer_type * l ->
+      [ `Read ] t ->
+      aux:(value -> unit Lwt.t) ->
+      string ->
+      key ->
+      unit Lwt.t =
+   fun (ltype, dst) ->
+    match ltype with
+    | Lower -> check_and_copy_to_lower ~dst
+    | Upper -> check_and_copy_to_current ~dst
 end
