@@ -47,6 +47,8 @@ module Make_ext
       also try to fix the issues. [ppf] is a formatter for progressive
       reporting. [`Fixed] and [`Corrupted] report the number of fixed/corrupted
       entries. *)
+
+  val sync : repo -> unit
 end
 
 module Make
@@ -76,4 +78,6 @@ module Make
       also try to fix the issues. [ppf] is a formatter for progressive
       reporting. [`Fixed] and [`Corrupted] report the number of fixed/corrupted
       entries. *)
+
+  val sync : repo -> unit
 end

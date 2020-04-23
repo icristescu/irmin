@@ -283,6 +283,8 @@ module Atomic_write (K : Irmin.Type.S) (V : Irmin.Hash.S) = struct
     else Lwt.return_unit
 
   let close t = Lwt_mutex.with_lock t.lock (fun () -> unsafe_close t)
+
+  let sync t = IO.sync t.block
 end
 
 module type CONFIG = Inode.CONFIG

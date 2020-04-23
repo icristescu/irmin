@@ -68,6 +68,8 @@ module Make_ext
       also try to fix the issues. [ppf] is a formatter for progressive
       reporting. [`Fixed] and [`Corrupted] report the number of fixed/corrupted
       entries. *)
+
+  val sync : repo -> unit
 end
 
 module Make
@@ -98,6 +100,8 @@ module Make
       also try to fix the issues. [ppf] is a formatter for progressive
       reporting. [`Fixed] and [`Corrupted] report the number of fixed/corrupted
       entries. *)
+
+  val sync : repo -> unit
 end
 
 module KV (Config : CONFIG) : Irmin.KV_MAKER
@@ -106,6 +110,8 @@ module Atomic_write (K : Irmin.Type.S) (V : Irmin.Hash.S) : sig
   include Irmin.ATOMIC_WRITE_STORE with type key = K.t and type value = V.t
 
   val v : ?fresh:bool -> ?readonly:bool -> string -> t Lwt.t
+
+  val sync : t -> unit
 end
 
 module Stats = Stats
@@ -121,3 +127,4 @@ val config_layers :
 
 module Make_ext_layered = Pack_layers.Make_ext
 module Make_layered = Pack_layers.Make
+module Stats_layers = Irmin_layers.Stats

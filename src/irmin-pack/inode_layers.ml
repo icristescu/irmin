@@ -76,6 +76,8 @@ module type S = sig
   val current_upper : 'a t -> 'a U.t
 end
 
+module Stats = Irmin_layers.Stats
+
 module Make
     (Conf : Inode.CONFIG)
     (H : Irmin.Hash.S)
@@ -607,12 +609,7 @@ module Make
 
       let add ~find t s v = add ~find ~copy:true t s v
 
-      let save :
-          add:(hash -> Bin.t -> unit Lwt.t) ->
-          mem:(hash -> bool) ->
-          t ->
-          unit Lwt.t =
-       fun ~add ~mem t ->
+      let save ~add ~mem t =
         let rec aux ~seed t =
           Log.debug (fun l -> l "save seed:%d" seed);
           match t.v with
@@ -851,6 +848,7 @@ module Make
     | Some v ->
         let v' = lift t v in
         aux v' >>= fun () ->
+        Stats.copy_nodes ();
         Inode.Val.save ~add ~mem v'.Val.v >>= fun () ->
         let k' = hash v' in
         if not (Irmin.Type.equal H.t k k') then

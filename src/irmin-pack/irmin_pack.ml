@@ -184,6 +184,11 @@ struct
         Contents.CA.close (contents_t t) >>= fun () ->
         Node.CA.close (snd (node_t t)) >>= fun () ->
         Commit.CA.close (snd (commit_t t)) >>= fun () -> Branch.close t.branch
+
+      let sync t =
+        Contents.CA.sync (contents_t t);
+        Commit.CA.sync (snd (commit_t t));
+        Branch.sync (branch_t t)
     end
   end
 
@@ -253,6 +258,8 @@ struct
       else Error (`Corrupted (!nb_corrupted + !nb_absent)) )
 
   include Irmin.Of_private (X)
+
+  let sync t = X.Repo.sync t
 end
 
 module Hash = Irmin.Hash.BLAKE2B
@@ -280,3 +287,4 @@ let config_layers = Pack_layers.config_layers
 
 module Make_ext_layered = Pack_layers.Make_ext
 module Make_layered = Pack_layers.Make
+module Stats_layers = Irmin_layers.Stats

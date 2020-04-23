@@ -53,6 +53,7 @@ let config_layers ?(conf = Conf.empty) ?(lower_root = Default.lower_root)
   config
 
 module IO = Layers_IO.Unix
+module Stats = Irmin_layers.Stats
 
 let reset_lock = Lwt_mutex.create ()
 
@@ -318,6 +319,11 @@ struct
 
       let upper_in_use t =
         if t.flip then upper_root1 t.config else upper_root0 t.config
+
+      let sync t =
+        Contents.CA.sync (contents_t t);
+        Commit.CA.sync (snd (commit_t t));
+        Branch.sync (branch_t t)
     end
   end
 
@@ -578,7 +584,9 @@ struct
     (match heads with [] -> Repo.heads t | m -> Lwt.return m) >>= fun heads ->
     Lwt_mutex.lock freeze_lock >>= fun () ->
     if t.X.Repo.closed then Lwt.fail_with "store is closed"
-    else unsafe_freeze ~min ~max ~squash ~keep_max ~heads ~recovery ?hook t
+    else (
+      Stats.freeze ();
+      unsafe_freeze ~min ~max ~squash ~keep_max ~heads ~recovery ?hook t )
 
   let freeze = freeze_with_hook ?hook:None
 
@@ -587,6 +595,8 @@ struct
   let async_freeze () = Lwt_mutex.is_locked freeze_lock
 
   let upper_in_use = X.Repo.upper_in_use
+
+  let sync t = X.Repo.sync t
 
   module PrivateLayer = struct
     module Hook = struct

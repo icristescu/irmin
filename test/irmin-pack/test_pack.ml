@@ -414,4 +414,5 @@ let misc =
     @ Pack.tests
     @ Branch.tests
     @ Multiple_instances.tests
-    @ Layered.tests )
+    @ Layered.tests
+    @ Concurrent.tests )

@@ -110,3 +110,5 @@ module type S_MAKER = functor
 module Make
     (CA : Irmin.CONTENT_ADDRESSABLE_STORE_MAKER)
     (AW : Irmin.ATOMIC_WRITE_STORE_MAKER) : S_MAKER
+
+module Stats = Stats

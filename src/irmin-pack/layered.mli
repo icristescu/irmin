@@ -76,6 +76,8 @@ module type AW = sig
   include Irmin.ATOMIC_WRITE_STORE
 
   val v : ?fresh:bool -> ?readonly:bool -> string -> t Lwt.t
+
+  val sync : t -> unit
 end
 
 module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
@@ -98,6 +100,8 @@ module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
     unit Lwt.t
 
   val flip_upper : t -> unit
+
+  val sync : t -> unit
 end
 
 module type LAYERED_MAKER = sig

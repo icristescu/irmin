@@ -121,9 +121,11 @@ struct
 
   let check_and_copy ~src ~dst ~aux str k =
     already_in_dst ~dst k >>= function
-    | true -> Lwt.return_unit
-    | false -> copy ~src ~dst ~aux str k
+    | true -> Lwt.return_false
+    | false -> copy ~src ~dst ~aux str k >|= fun () -> true
 end
+
+module Stats = Irmin_layers.Stats
 
 module Content_addressable
     (H : Irmin.Hash.S)
@@ -293,11 +295,22 @@ module Content_addressable
     | Upper : [ `Read | `Write ] U.t layer_type
     | Lower : [ `Read | `Write ] L.t layer_type
 
+  let stats str = function
+    | true -> (
+        match str with
+        | "Contents" -> Stats.copy_contents ()
+        | "Node" -> Stats.copy_nodes ()
+        | "Commit" -> Stats.copy_commits ()
+        | _ -> failwith "unexpected type in stats" )
+    | false -> ()
+
   let check_and_copy_to_lower t ~dst ~aux str k =
     CopyLower.check_and_copy ~src:(previous_upper t) ~dst ~aux str k
+    >|= stats str
 
   let check_and_copy_to_current t ~dst ~aux str (k : key) =
     CopyUpper.check_and_copy ~src:(previous_upper t) ~dst ~aux str k
+    >|= stats str
 
   let check_and_copy :
       type l.
@@ -357,6 +370,8 @@ module type AW = sig
   include Irmin.ATOMIC_WRITE_STORE
 
   val v : ?fresh:bool -> ?readonly:bool -> string -> t Lwt.t
+
+  val sync : t -> unit
 end
 
 module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
@@ -506,6 +521,7 @@ end = struct
              | true ->
                  Log.debug (fun l ->
                      l "[branches] copy to lower %a" (Irmin.Type.pp K.t) branch);
+                 Stats.copy_branches ();
                  L.set t.lower branch hash
              | false -> Lwt.return_unit)
             >>= fun () ->
@@ -513,6 +529,7 @@ end = struct
             | true ->
                 Log.debug (fun l ->
                     l "[branches] copy to current %a" (Irmin.Type.pp K.t) branch);
+                Stats.copy_branches ();
                 U.set current branch hash
             | false -> Lwt.return_unit ))
       branches
@@ -524,4 +541,9 @@ end = struct
   let clear t =
     U.clear (fst t.uppers) >>= fun () ->
     U.clear (snd t.uppers) >>= fun () -> L.clear t.lower
+
+  let sync t =
+    U.sync (fst t.uppers);
+    U.sync (snd t.uppers);
+    L.sync t.lower
 end
