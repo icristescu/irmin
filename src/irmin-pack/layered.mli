@@ -18,6 +18,7 @@ module type LAYERED_S = sig
     index:index ->
     string ->
     Lwt_mutex.t ->
+    bool ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -87,6 +88,7 @@ module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
     ?readonly:bool ->
     string ->
     Lwt_mutex.t ->
+    bool ->
     t Lwt.t
 
   val copy :

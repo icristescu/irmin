@@ -268,8 +268,8 @@ module Test = struct
     create_block1 ctxt >>= fun (ctxt, block1) ->
     gc ctxt.index block1 >>= fun ctxt ->
     Store.PrivateLayer.wait_for_freeze () >>= fun () ->
-    Store.Repo.close ctxt.index.repo >>= fun () ->
     let hash1 = Store.Commit.hash block1 in
+    Store.Repo.close ctxt.index.repo >>= fun () ->
     (StoreSimple.Commit.of_hash repo hash1 >>= function
      | None -> Alcotest.fail "checkout block1"
      | Some commit ->
@@ -277,8 +277,7 @@ module Test = struct
          StoreSimple.Tree.find tree [ "version" ] >>= fun version ->
          Alcotest.(check (option string)) "version" version (Some "0.0");
          Lwt.return_unit)
-    >>= fun () ->
-    Store.Repo.close ctxt.index.repo >>= fun () -> StoreSimple.Repo.close repo
+    >>= fun () -> StoreSimple.Repo.close repo
 
   let test_two_rw_instances () =
     let store_name = fresh_name () in
@@ -388,15 +387,15 @@ module Test = struct
     Alcotest.(check string "upper1" "upper1" upper1);
     create_block1 ctxt >>= fun (ctxt, block1) ->
     gc ctxt.index block1 >>= fun ctxt ->
-    (* let upper0 = Store.upper_in_use ctxt.index.repo in
-       Alcotest.(check string "upper0.1" upper0 Conf.upper_root0);*)
+    let upper0 = Store.upper_in_use ctxt.index.repo in
+    Alcotest.(check string "upper0.1" upper0 Conf.upper_root0);
     checkout_and_create ctxt.index block1 create_block1a
     >>= fun (ctxt, block1a) ->
     Store.Repo.close ctxt.index.repo >>= fun () ->
     Store.Repo.v (config ~readonly:false ~fresh:false store_name)
     >>= fun repo ->
-    (* let upper0 = Store.upper_in_use repo in
-       Alcotest.(check string "upper0.2" upper0 Conf.upper_root0);*)
+    let upper0 = Store.upper_in_use repo in
+    Alcotest.(check string "upper0.2" upper0 Conf.upper_root0);
     (Store.Commit.of_hash repo (Store.Commit.hash block1) >>= function
      | None -> Alcotest.fail "no hash found in repo"
      | Some commit ->
@@ -414,8 +413,8 @@ module Test = struct
     Store.Repo.close repo >>= fun () ->
     Store.Repo.v (config ~readonly:false ~fresh:false store_name)
     >>= fun repo ->
-    (* let upper0 = Store.upper_in_use repo in
-       Alcotest.(check string "upper0.3" upper0 Conf.upper_root0)*)
+    let upper0 = Store.upper_in_use repo in
+    Alcotest.(check string "upper0.3" upper0 Conf.upper_root0);
     Store.Repo.close repo
 
   let tests =

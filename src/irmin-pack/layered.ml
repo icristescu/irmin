@@ -39,6 +39,7 @@ module type LAYERED_S = sig
     index:index ->
     string ->
     Lwt_mutex.t ->
+    bool ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -165,9 +166,9 @@ module Content_addressable
 
   let batch_lower t f = L.batch t.lower f
 
-  let v upper1 upper0 ?fresh ?readonly ?lru_size ~index root lock =
+  let v upper1 upper0 ?fresh ?readonly ?lru_size ~index root lock flip =
     L.v ?fresh ?readonly ?lru_size ~index root >|= fun lower ->
-    { lower; flip = true; uppers = (upper1, upper0); lock }
+    { lower; flip; uppers = (upper1, upper0); lock }
 
   let add t v =
     Lwt_mutex.with_lock t.lock (fun () ->
@@ -368,6 +369,7 @@ module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
     ?readonly:bool ->
     string ->
     Lwt_mutex.t ->
+    bool ->
     t Lwt.t
 
   val copy :
@@ -486,9 +488,9 @@ end = struct
     U.close (fst t.uppers) >>= fun () ->
     U.close (snd t.uppers) >>= fun () -> L.close t.lower
 
-  let v upper1 upper0 ?fresh ?readonly file lock =
+  let v upper1 upper0 ?fresh ?readonly file lock flip =
     L.v ?fresh ?readonly file >|= fun lower ->
-    { lower; flip = true; uppers = (upper1, upper0); lock }
+    { lower; flip; uppers = (upper1, upper0); lock }
 
   (** Do not copy branches that point to commits not copied. *)
   let copy t ~mem_commit_lower ~mem_commit_upper =

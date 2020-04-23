@@ -32,6 +32,7 @@ module type S = sig
     index:index ->
     string ->
     Lwt_mutex.t ->
+    bool ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t

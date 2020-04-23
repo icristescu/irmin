@@ -52,6 +52,8 @@ let config_layers ?(conf = Conf.empty) ?(lower_root = Default.lower_root)
   let config = Conf.add config keep_max_key keep_max in
   config
 
+module IO = Layers_IO.Unix
+
 let reset_lock = Lwt_mutex.create ()
 
 let freeze_lock = Lwt_mutex.create ()
@@ -192,6 +194,7 @@ struct
         uppers : upper_layer * upper_layer;
         mutable flip : bool;
         mutable closed : bool;
+        flip_file : IO.t;
       }
 
       let contents_t t = t.contents
@@ -203,8 +206,6 @@ struct
       let branch_t t = t.branch
 
       let previous_upper t = if t.flip then snd t.uppers else fst t.uppers
-
-      let current_upper t = if t.flip then fst t.uppers else snd t.uppers
 
       let log_current_upper t = if t.flip then "upper1" else "upper0"
 
@@ -241,6 +242,11 @@ struct
         v_upper upper1 config >>= fun upper1 ->
         let upper0 = Filename.concat root (upper_root0 config) in
         v_upper upper0 config >>= fun upper0 ->
+        let flip_file =
+          let file = Filename.concat root "flip" in
+          IO.v file
+        in
+        let flip = IO.read_flip flip_file in
         let root = Filename.concat root (lower_root config) in
         let fresh = fresh config in
         let lru_size = lru_size config in
@@ -248,15 +254,16 @@ struct
         let log_size = index_log_size config in
         let index = Index.v ~fresh ~readonly ~log_size root in
         Contents.CA.v upper1.contents upper0.contents ~fresh ~readonly ~lru_size
-          ~index root reset_lock
+          ~index root reset_lock flip
         >>= fun contents ->
         Node.CA.v upper1.node upper0.node ~fresh ~readonly ~lru_size ~index root
-          reset_lock
+          reset_lock flip
         >>= fun node ->
         Commit.CA.v upper1.commit upper0.commit ~fresh ~readonly ~lru_size
-          ~index root reset_lock
+          ~index root reset_lock flip
         >>= fun commit ->
         Branch.v upper1.branch upper0.branch ~fresh ~readonly root reset_lock
+          flip
         >|= fun branch ->
         {
           contents;
@@ -266,12 +273,14 @@ struct
           config;
           index;
           uppers = (upper1, upper0);
-          flip = true;
+          flip;
           closed = false;
+          flip_file;
         }
 
       let unsafe_close t =
         t.closed <- true;
+        IO.close t.flip_file;
         Index.close t.index;
         Index.close (fst t.uppers).index;
         Index.close (snd t.uppers).index;
@@ -300,6 +309,7 @@ struct
 
       let flip_upper t =
         t.flip <- not t.flip;
+        IO.write_flip t.flip t.flip_file;
         Contents.CA.flip_upper t.contents;
         Node.CA.flip_upper t.node;
         Commit.CA.flip_upper t.commit;
