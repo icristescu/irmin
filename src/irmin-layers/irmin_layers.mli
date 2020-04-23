@@ -24,6 +24,7 @@ module type S = sig
     ?squash:bool ->
     ?keep_max:bool ->
     ?heads:commit list ->
+    ?recovery:bool ->
     repo ->
     unit Lwt.t
 
@@ -62,6 +63,7 @@ module type S = sig
       ?squash:bool ->
       ?keep_max:bool ->
       ?heads:commit list ->
+      ?recovery:bool ->
       ?hook:[ `After_Clear | `Before_Clear | `Before_Copy ] Hook.t ->
       repo ->
       unit Lwt.t

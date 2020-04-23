@@ -26,6 +26,7 @@ module type S = sig
     ?squash:bool ->
     ?keep_max:bool ->
     ?heads:commit list ->
+    ?recovery:bool ->
     repo ->
     unit Lwt.t
 
@@ -55,6 +56,7 @@ module type S = sig
       ?squash:bool ->
       ?keep_max:bool ->
       ?heads:commit list ->
+      ?recovery:bool ->
       ?hook:[ `After_Clear | `Before_Clear | `Before_Copy ] Hook.t ->
       repo ->
       unit Lwt.t
@@ -169,7 +171,7 @@ struct
 
   include Irmin.Of_private (X)
 
-  let freeze ?min:_ ?max:_ ?squash:_ ?keep_max:_ ?heads:_ _repo =
+  let freeze ?min:_ ?max:_ ?squash:_ ?keep_max:_ ?heads:_ ?recovery:_ _repo =
     Lwt.fail_with "not implemented"
 
   type store_handle =
@@ -192,8 +194,8 @@ struct
 
     let wait_for_freeze _ = Lwt.fail_with "not implemented"
 
-    let freeze_with_hook ?min:_ ?max:_ ?squash:_ ?keep_max:_ ?heads:_ ?hook:_
-        _repo =
+    let freeze_with_hook ?min:_ ?max:_ ?squash:_ ?keep_max:_ ?heads:_
+        ?recovery:_ ?hook:_ _repo =
       Lwt.fail_with "not implemented"
   end
 end

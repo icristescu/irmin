@@ -549,9 +549,12 @@ struct
   (** main thread takes the lock at the begining of freeze and async thread
       releases it at the end. This is to ensure that no two freezes can run
       simultaneously. *)
-  let unsafe_freeze ~min ~max ~squash ~keep_max ~heads ?hook t =
+  let unsafe_freeze ~min ~max ~squash ~keep_max ~heads ~recovery ?hook t =
     Log.debug (fun l -> l "unsafe_freeze");
-    Lwt_mutex.with_lock reset_lock (fun () -> X.Repo.flip_upper t) >|= fun () ->
+    ( if not recovery then
+      Lwt_mutex.with_lock reset_lock (fun () -> X.Repo.flip_upper t)
+    else Lwt.return_unit )
+    >|= fun () ->
     Lwt.async (fun () ->
         Lwt.pause () >>= fun () ->
         may (fun f -> f `Before_Copy) hook >>= fun () ->
@@ -567,7 +570,7 @@ struct
     Log.debug (fun l -> l "after async called to copy")
 
   let freeze_with_hook ?(min = []) ?(max = []) ?(squash = false) ?keep_max
-      ?(heads = []) ?hook t =
+      ?(heads = []) ?(recovery = false) ?hook t =
     let keep_max =
       match keep_max with None -> get_keep_max t.X.Repo.config | Some b -> b
     in
@@ -575,7 +578,7 @@ struct
     (match heads with [] -> Repo.heads t | m -> Lwt.return m) >>= fun heads ->
     Lwt_mutex.lock freeze_lock >>= fun () ->
     if t.X.Repo.closed then Lwt.fail_with "store is closed"
-    else unsafe_freeze ~min ~max ~squash ~keep_max ~heads ?hook t
+    else unsafe_freeze ~min ~max ~squash ~keep_max ~heads ~recovery ?hook t
 
   let freeze = freeze_with_hook ?hook:None
 
