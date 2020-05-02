@@ -1,5 +1,7 @@
 exception Copy_error of string
 
+module IO = Layers_IO.Unix
+
 module type LAYERED_S = sig
   include Pack.S
 
@@ -19,6 +21,8 @@ module type LAYERED_S = sig
     string ->
     Lwt_mutex.t ->
     bool ->
+    IO.t ->
+    int64 ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -58,6 +62,8 @@ module type LAYERED_S = sig
   val lower : 'a t -> [ `Read ] L.t
 
   val flip_upper : 'a t -> unit
+
+  val ro_sync : 'a t -> bool -> int64 -> unit
 end
 
 module Content_addressable
@@ -91,6 +97,7 @@ module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
     string ->
     Lwt_mutex.t ->
     bool ->
+    IO.t ->
     t Lwt.t
 
   val copy :

@@ -107,7 +107,9 @@ let add rw tree i =
   S.of_branch rw (branch i) >>= fun t ->
   S.Tree.add tree [ key i ] (value i) >>= fun tree ->
   S.set_tree_exn ~parents:[] ~info t [] tree >>= fun () ->
-  S.Head.get t >|= fun c -> (tree, c)
+  S.Head.get t >|= fun c ->
+  Log.debug (fun l -> l "Set %s to %a" (branch i) S.Commit.pp_hash c);
+  (tree, c)
 
 let worker w_pipe r_pipe =
   Log.debug (fun l -> l "Worker started %d" (Unix.getpid ()));
@@ -120,6 +122,7 @@ let worker w_pipe r_pipe =
       write w_pipe;
       ignore (read r_pipe);
       Log.debug (fun l -> l "Signal received from parent to read data");
+      S.ro_sync ro;
       test_find_present ro (round_nb + 1) >>= fun () -> aux (round_nb + 1) )
   in
   aux 0 >>= fun () -> S.Repo.close ro
@@ -157,6 +160,12 @@ let concurrent_reads () =
           for _ = 0 to 1 do
             write write_main
           done;
+          (S.Branch.find rw "b0" >>= function
+           | None -> Lwt.fail_with "branch b0 not found"
+           | Some c ->
+               S.layer_id rw (S.Commit_t (S.Commit.hash c)) >|= fun id ->
+               Log.debug (fun l -> l "b0 is in %s" id))
+          >>= fun () ->
           (* test_find_present rw (round_nb + 1) >>= fun () -> *)
           aux tree (round_nb + 1) )
       in

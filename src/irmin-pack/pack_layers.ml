@@ -196,6 +196,7 @@ struct
         mutable flip : bool;
         mutable closed : bool;
         flip_file : IO.t;
+        mutable generation : int64;
       }
 
       let contents_t t = t.contents
@@ -209,6 +210,8 @@ struct
       let previous_upper t = if t.flip then snd t.uppers else fst t.uppers
 
       let log_current_upper t = if t.flip then "upper1" else "upper0"
+
+      let log_previous_upper t = if t.flip then "upper0" else "upper1"
 
       let batch_upper (t : upper_layer) f =
         Commit.CA.U.batch t.commit (fun commit ->
@@ -237,6 +240,12 @@ struct
         Branch.U.v ~fresh ~readonly root >|= fun branch ->
         { index; contents; node; commit; branch }
 
+      (** if a freeze is ongoing than RO has the upper reversed *)
+      let v_readonly flip generation =
+        if flip && Int64.to_int generation mod 2 = 0 then false
+        else if (not flip) && Int64.to_int generation mod 2 = 1 then true
+        else flip
+
       let v config =
         let root = root config in
         let upper1 = Filename.concat root (upper_root1 config) in
@@ -248,23 +257,25 @@ struct
           IO.v file
         in
         let flip = IO.read_flip flip_file in
+        let generation = IO.read_generation flip_file in
         let root = Filename.concat root (lower_root config) in
         let fresh = fresh config in
         let lru_size = lru_size config in
         let readonly = readonly config in
         let log_size = index_log_size config in
         let index = Index.v ~fresh ~readonly ~log_size root in
+        let flip = if readonly then v_readonly flip generation else flip in
         Contents.CA.v upper1.contents upper0.contents ~fresh ~readonly ~lru_size
-          ~index root reset_lock flip
+          ~index root reset_lock flip flip_file generation
         >>= fun contents ->
         Node.CA.v upper1.node upper0.node ~fresh ~readonly ~lru_size ~index root
-          reset_lock flip
+          reset_lock flip flip_file generation
         >>= fun node ->
         Commit.CA.v upper1.commit upper0.commit ~fresh ~readonly ~lru_size
-          ~index root reset_lock flip
+          ~index root reset_lock flip flip_file generation
         >>= fun commit ->
         Branch.v upper1.branch upper0.branch ~fresh ~readonly root reset_lock
-          flip
+          flip flip_file
         >|= fun branch ->
         {
           contents;
@@ -277,6 +288,7 @@ struct
           flip;
           closed = false;
           flip_file;
+          generation;
         }
 
       let unsafe_close t =
@@ -303,27 +315,39 @@ struct
         | _ -> failwith "unexpected layer id"
 
       let clear_previous_upper t =
-        let t = previous_upper t in
-        Contents.CA.U.clear t.contents >>= fun () ->
-        Node.CA.U.clear t.node >>= fun () ->
-        Commit.CA.U.clear t.commit >>= fun () -> Branch.U.clear t.branch
+        Log.debug (fun l -> l "clear upper %s" (log_previous_upper t));
+        let upper = previous_upper t in
+        Contents.CA.U.clear upper.contents >>= fun () ->
+        Node.CA.U.clear upper.node >>= fun () ->
+        Commit.CA.U.clear upper.commit >>= fun () ->
+        Branch.U.clear upper.branch >|= fun () ->
+        let generation = Int64.succ t.generation in
+        t.generation <- generation;
+        IO.write_generation generation t.flip_file
 
       let flip_upper t =
         t.flip <- not t.flip;
-        IO.write_flip t.flip t.flip_file;
         Contents.CA.flip_upper t.contents;
         Node.CA.flip_upper t.node;
         Commit.CA.flip_upper t.commit;
         Branch.flip_upper t.branch;
+        IO.write_flip t.flip t.flip_file;
         Lwt.return_unit
-
-      let upper_in_use t =
-        if t.flip then upper_root1 t.config else upper_root0 t.config
 
       let sync t =
         Contents.CA.sync (contents_t t);
         Commit.CA.sync (snd (commit_t t));
         Branch.sync (branch_t t)
+
+      let upper_in_use t =
+        if t.flip then upper_root1 t.config else upper_root0 t.config
+
+      let ro_sync t =
+        t.flip <- IO.read_flip t.flip_file;
+        t.generation <- IO.read_generation t.flip_file;
+        Contents.CA.ro_sync (contents_t t) t.flip t.generation;
+        Node.CA.ro_sync (snd (node_t t)) t.flip t.generation;
+        Commit.CA.ro_sync (snd (commit_t t)) t.flip t.generation
     end
   end
 
@@ -597,6 +621,8 @@ struct
   let upper_in_use = X.Repo.upper_in_use
 
   let sync t = X.Repo.sync t
+
+  let ro_sync = X.Repo.ro_sync
 
   module PrivateLayer = struct
     module Hook = struct

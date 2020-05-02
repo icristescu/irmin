@@ -32,6 +32,8 @@ module type S = sig
 
   val sync : t -> unit
 
+  val ro_sync : t -> unit
+
   val v : ?fresh:bool -> ?readonly:bool -> ?capacity:int -> string -> t
 
   val clear : t -> unit
@@ -86,8 +88,9 @@ module Make (IO : IO.S) : S = struct
 
   let sync t = IO.sync t.io
 
+  let ro_sync t = if IO.readonly t.io then sync_offset t
+
   let index t v =
-    if IO.readonly t.io then sync_offset t;
     try Some (Hashtbl.find t.cache v)
     with Not_found ->
       let id = Hashtbl.length t.cache in
@@ -100,12 +103,12 @@ module Make (IO : IO.S) : S = struct
         Some id )
 
   let find t id =
-    if IO.readonly t.io then sync_offset t;
     let v = try Some (Hashtbl.find t.index id) with Not_found -> None in
     v
 
   let clear t =
     IO.clear t.io;
+    IO.sync t.io;
     Hashtbl.clear t.cache;
     Hashtbl.clear t.index
 

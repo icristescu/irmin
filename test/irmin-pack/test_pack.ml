@@ -142,6 +142,7 @@ module Dict = struct
     ignore_int (Dict.index dict "titiabc");
     ignore_int (Dict.index dict "foo");
     Dict.sync dict;
+    Dict.ro_sync r;
     check_index "titiabc" 3;
     check_index "bar" 1;
     check_index "toto" 2;
@@ -151,6 +152,7 @@ module Dict = struct
     check_raise "hello";
     check_none "hello" 4;
     Dict.sync dict;
+    Dict.ro_sync r;
     check_find "hello" 4;
     Dict.close dict;
     Dict.close r
@@ -207,6 +209,8 @@ module Pack = struct
       Pack.find r h2 >>= fun y2 ->
       Alcotest.(check (option string)) "before sync" None y2;
       Pack.sync w;
+      Index.ro_sync i;
+      Pack.ro_sync r;
       Pack.find r h2 >>= fun y2 ->
       Alcotest.(check (option string)) "after sync" (Some x2) y2;
       let x3 = "otoo" in
@@ -215,6 +219,8 @@ module Pack = struct
       let h4 = sha1 x4 in
       adds [ (h3, x3); (h4, x4) ];
       Pack.sync w;
+      Index.ro_sync i;
+      Pack.ro_sync r;
       Pack.find r h2 >>= fun y2 ->
       Alcotest.(check (option string)) "y2" (Some x2) y2;
       Pack.find r h3 >>= fun y3 ->

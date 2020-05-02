@@ -674,20 +674,22 @@ module Make (P : S.PRIVATE) = struct
             | Some c -> Some (`Contents (c, m)) )
       in
       let of_value repo v =
-        match P.Node.Val.find v step with
-        | None -> Lwt.return_none
-        | Some (`Contents (c, m)) -> (
-            let c = Contents.of_hash repo c in
-            let (v : elt) = `Contents (c, m) in
-            add_to_findv_cache t step v;
-            Contents.to_value c >|= function
-            | None -> None
-            | Some c -> Some (`Contents (c, m)) )
-        | Some (`Node n) ->
-            let n = of_hash repo n in
-            let v = `Node n in
-            add_to_findv_cache t step v;
-            Lwt.return_some v
+        try
+          match P.Node.Val.find v step with
+          | None -> Lwt.return_none
+          | Some (`Contents (c, m)) -> (
+              let c = Contents.of_hash repo c in
+              let (v : elt) = `Contents (c, m) in
+              add_to_findv_cache t step v;
+              Contents.to_value c >|= function
+              | None -> None
+              | Some c -> Some (`Contents (c, m)) )
+          | Some (`Node n) ->
+              let n = of_hash repo n in
+              let v = `Node n in
+              add_to_findv_cache t step v;
+              Lwt.return_some v
+        with exn -> Lwt.fail exn
       in
       let of_t () =
         match t.v with

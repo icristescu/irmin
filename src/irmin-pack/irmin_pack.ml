@@ -189,6 +189,11 @@ struct
         Contents.CA.sync (contents_t t);
         Commit.CA.sync (snd (commit_t t));
         Branch.sync (branch_t t)
+
+      let ro_sync t =
+        Contents.CA.ro_sync (contents_t t);
+        Node.CA.ro_sync (snd (node_t t));
+        Commit.CA.ro_sync (snd (commit_t t))
     end
   end
 
@@ -260,6 +265,8 @@ struct
   include Irmin.Of_private (X)
 
   let sync t = X.Repo.sync t
+
+  let ro_sync = X.Repo.ro_sync
 end
 
 module Hash = Irmin.Hash.BLAKE2B

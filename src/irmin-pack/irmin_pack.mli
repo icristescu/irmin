@@ -70,6 +70,8 @@ module Make_ext
       entries. *)
 
   val sync : repo -> unit
+
+  val ro_sync : repo -> unit
 end
 
 module Make
@@ -102,6 +104,8 @@ module Make
       entries. *)
 
   val sync : repo -> unit
+
+  val ro_sync : repo -> unit
 end
 
 module KV (Config : CONFIG) : Irmin.KV_MAKER

@@ -47,8 +47,6 @@ let open_ro_after_rw_closed () =
 
 module P = S.Private
 
-let _t repo = P.Repo.contents_t repo
-
 let clear repo =
   let t = P.Repo.contents_t repo in
   let b = P.Repo.branch_t repo in
@@ -65,7 +63,9 @@ let clear_rw () =
   S.Tree.add S.Tree.empty [ "a" ] "x" >>= fun tree ->
   S.Commit.v rw ~parents:[] ~info:(info ()) tree >>= fun c ->
   let h = S.Commit.hash c in
+  S.ro_sync ro;
   clear rw >>= fun () ->
+  S.ro_sync ro;
   (S.Commit.of_hash ro h >|= function
    | None -> ()
    | Some _ -> Alcotest.fail "should not find commit in index")
@@ -93,6 +93,7 @@ let find_ro_after_rw_cleared () =
   S.Tree.add S.Tree.empty [ "a" ] "x" >>= fun tree ->
   S.Commit.v rw ~parents:[] ~info:(info ()) tree >>= fun c ->
   let h = S.Commit.hash c in
+  S.ro_sync ro;
   (S.Commit.of_hash ro h >|= function
    | None -> Alcotest.fail "no hash"
    | Some _ -> ())
@@ -101,6 +102,7 @@ let find_ro_after_rw_cleared () =
   S.Tree.add S.Tree.empty [ "b" ] "y" >>= fun tree ->
   S.Commit.v rw ~parents:[] ~info:(info ()) tree >>= fun c ->
   let h1 = S.Commit.hash c in
+  S.ro_sync ro;
   (S.Commit.of_hash ro h1 >>= function
    | None -> Alcotest.fail "no hash"
    | Some commit ->

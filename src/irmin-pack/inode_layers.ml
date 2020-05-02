@@ -22,6 +22,8 @@ let src =
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
+module IO = Layers_IO.Unix
+
 module type S = sig
   include Inode.S
 
@@ -41,6 +43,8 @@ module type S = sig
     string ->
     Lwt_mutex.t ->
     bool ->
+    IO.t ->
+    int64 ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -74,6 +78,8 @@ module type S = sig
   val flip_upper : 'a t -> unit
 
   val current_upper : 'a t -> 'a U.t
+
+  val ro_sync : 'a t -> bool -> int64 -> unit
 end
 
 module Stats = Irmin_layers.Stats
@@ -832,6 +838,8 @@ module Make
   let flip_upper = Inode.flip_upper
 
   let current_upper = Inode.current_upper
+
+  let ro_sync = Inode.ro_sync
 
   type 'a layer_type =
     | Upper : [ `Read | `Write ] U.t layer_type

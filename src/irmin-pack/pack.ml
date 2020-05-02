@@ -66,6 +66,8 @@ module type S = sig
 
   val sync : 'a t -> unit
 
+  val ro_sync : 'a t -> unit
+
   type integrity_error = [ `Wrong_hash | `Absent_value ]
 
   val integrity_check :
@@ -121,9 +123,9 @@ struct
   }
 
   let clear t =
+    Index.clear t.index;
     IO.clear t.block;
     IO.sync t.block;
-    Index.clear t.index;
     Dict.clear t.dict
 
   let valid t =
@@ -278,8 +280,10 @@ struct
 
     let find t k =
       Lwt_mutex.with_lock t.pack.lock (fun () ->
-          let v = unsafe_find t k in
-          Lwt.return v)
+          try
+            let v = unsafe_find t k in
+            Lwt.return v
+          with exn -> Lwt.fail exn)
 
     let cast t = (t :> [ `Read | `Write ] t)
 
@@ -288,6 +292,10 @@ struct
       IO.sync t.pack.block;
       Index.flush t.pack.index;
       Tbl.clear t.staging
+
+    let ro_sync t =
+      Dict.ro_sync t.pack.dict;
+      Index.ro_sync t.pack.index
 
     type integrity_error = [ `Wrong_hash | `Absent_value ]
 

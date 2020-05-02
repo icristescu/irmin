@@ -12,7 +12,7 @@ let fresh_name =
     Logs.info (fun m -> m "Constructing irmin store %s" name);
     name
 
-let index_log_size = Some 1_000
+let index_log_size = Some 4
 
 module Conf = struct
   let entries = 32
@@ -119,10 +119,34 @@ module Test = struct
     set ctxt [ "version" ] "0.0" >>= fun ctxt ->
     commit ctxt >|= fun h -> (ctxt, h)
 
+  let check_block1 repo block1 =
+    Store.Commit.of_hash repo (Store.Commit.hash block1) >>= function
+    | None -> Alcotest.fail "no hash found in repo"
+    | Some commit ->
+        let tree = Store.Commit.tree commit in
+        Store.Tree.find tree [ "a"; "b" ] >>= fun novembre ->
+        Alcotest.(check (option string)) "nov" (Some "Novembre") novembre;
+        Store.Tree.find tree [ "a"; "c" ] >>= fun juin ->
+        Alcotest.(check (option string)) "juin" (Some "Juin") juin;
+        Store.Tree.find tree [ "version" ] >|= fun version ->
+        Alcotest.(check (option string)) "version" (Some "0.0") version
+
   let create_block1a ctxt =
     del ctxt [ "a"; "b" ] >>= fun ctxt ->
     set ctxt [ "a"; "d" ] "Mars" >>= fun ctxt ->
     commit ctxt >|= fun h -> (ctxt, h)
+
+  let check_block1a repo block1a =
+    Store.Commit.of_hash repo (Store.Commit.hash block1a) >>= function
+    | None -> Alcotest.fail "no hash found in repo"
+    | Some commit ->
+        let tree = Store.Commit.tree commit in
+        Store.Tree.find tree [ "a"; "d" ] >>= fun mars ->
+        Alcotest.(check (option string)) "mars" (Some "Mars") mars;
+        Store.Tree.find tree [ "a"; "c" ] >>= fun juin ->
+        Alcotest.(check (option string)) "juin" (Some "Juin") juin;
+        Store.Tree.find tree [ "version" ] >|= fun version ->
+        Alcotest.(check (option string)) "version" (Some "0.0") version
 
   let create_block1b ctxt =
     del ctxt [ "a"; "c" ] >>= fun ctxt ->
@@ -261,15 +285,15 @@ module Test = struct
     let store_name = fresh_name () in
     clean_dir store_name;
     init store_name >>= fun ctxt ->
-    StoreSimple.Repo.v
-      (config ~fresh:false ~readonly:true
-         (Filename.concat store_name Conf.lower_root))
-    >>= fun repo ->
     create_block1 ctxt >>= fun (ctxt, block1) ->
     gc ctxt.index block1 >>= fun ctxt ->
     Store.PrivateLayer.wait_for_freeze () >>= fun () ->
     let hash1 = Store.Commit.hash block1 in
     Store.Repo.close ctxt.index.repo >>= fun () ->
+    StoreSimple.Repo.v
+      (config ~fresh:false ~readonly:true
+         (Filename.concat store_name Conf.lower_root))
+    >>= fun repo ->
     (StoreSimple.Commit.of_hash repo hash1 >>= function
      | None -> Alcotest.fail "checkout block1"
      | Some commit ->
@@ -310,22 +334,16 @@ module Test = struct
     init store_name >>= fun ctxt ->
     Store.Repo.v (config ~readonly:true ~fresh:false store_name) >>= fun repo ->
     create_block1 ctxt >>= fun (ctxt, block1) ->
-    let check_block =
-      Store.Commit.of_hash repo (Store.Commit.hash block1) >>= function
-      | None -> Alcotest.fail "no hash found in repo"
-      | Some commit ->
-          let tree = Store.Commit.tree commit in
-          Store.Tree.find tree [ "a"; "b" ] >|= fun novembre ->
-          Alcotest.(check (option string)) "nov" (Some "Novembre") novembre
-    in
-    check_block >>= fun () ->
+    Store.ro_sync repo;
+    check_block1 repo block1 >>= fun () ->
     gc ctxt.index block1 >>= fun ctxt ->
-    check_block >>= fun () ->
+    check_block1 repo block1 >>= fun () ->
     Store.PrivateLayer.wait_for_freeze () >>= fun () ->
-    check_block >>= fun () ->
+    check_block1 repo block1 >>= fun () ->
     checkout_and_create ctxt.index block1 create_block1a
     >>= fun (ctxt, block1a) ->
-    let check_block1a =
+    let check_block1a () =
+      Store.ro_sync repo;
       Store.Commit.of_hash repo (Store.Commit.hash block1a) >>= function
       | None -> Alcotest.fail "no hash found in repo"
       | Some commit ->
@@ -333,10 +351,11 @@ module Test = struct
           Store.Tree.find tree [ "a"; "d" ] >|= fun mars ->
           Alcotest.(check (option string)) "mars" (Some "Mars") mars
     in
-    check_block1a >>= fun () ->
+    check_block1a () >>= fun () ->
     gc ctxt.index block1a >>= fun ctxt ->
     checkout_and_create ctxt.index block1 create_block1b
     >>= fun (ctxt, block1b) ->
+    Store.ro_sync repo;
     (Store.Commit.of_hash repo (Store.Commit.hash block1b) >>= function
      | None -> Alcotest.fail "no hash found in repo"
      | Some commit ->
@@ -344,7 +363,7 @@ module Test = struct
          Store.Tree.find tree [ "a"; "d" ] >|= fun fevrier ->
          Alcotest.(check (option string)) "fevrier" (Some "Février") fevrier)
     >>= fun () ->
-    check_block1a >>= fun () ->
+    check_block1a () >>= fun () ->
     Store.Repo.close ctxt.index.repo >>= fun () -> Store.Repo.close repo
 
   let test_ro_read () =
@@ -369,6 +388,7 @@ module Test = struct
     in
     gc ctxt.index block1a >>= fun ctxt ->
     Store.PrivateLayer.wait_for_freeze () >>= fun () ->
+    Store.ro_sync repo;
     Store.Commit.of_hash repo (Store.Commit.hash block1a) >>= function
     | None -> Alcotest.fail "no hash found in repo"
     | Some commit ->
@@ -417,6 +437,41 @@ module Test = struct
     Alcotest.(check string "upper0.3" upper0 Conf.upper_root0);
     Store.Repo.close repo
 
+  (** at the moment of the last ro_sync, the value is in upper1, but when RO
+      calls find, the value moved to upper0, upper1 is cleared and filled with
+      something else. in this test we can call ro_sync again, but the situation
+      can occur when RO is concurrent with the freezes. *)
+  let test_ro_find_after_clear () =
+    let store_name = fresh_name () in
+    clean_dir store_name;
+    init store_name >>= fun ctxt ->
+    Store.Repo.v (config ~readonly:true ~fresh:false store_name) >>= fun repo ->
+    create_block1 ctxt >>= fun (ctxt, block1) ->
+    Store.ro_sync repo;
+    Store.freeze ctxt.index.repo ~max:[ block1 ] ~keep_max:true >>= fun () ->
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
+    let ctxt = { index = ctxt.index; tree = ctxt.tree; parents = [ block1 ] } in
+    create_block1a ctxt >>= fun (_ctxt, block1a) ->
+    Store.freeze ctxt.index.repo ~max:[ block1a ] ~keep_max:true >>= fun () ->
+    Store.PrivateLayer.wait_for_freeze () >>= fun () ->
+    (* the commit is in lower *)
+    check_block1 repo block1 >>= fun () ->
+    Store.Repo.close ctxt.index.repo >>= fun () -> Store.Repo.close repo
+
+  let test_ro_syncs () =
+    let store_name = fresh_name () in
+    clean_dir store_name;
+    init store_name >>= fun ctxt ->
+    Store.Repo.v (config ~readonly:true ~fresh:false store_name) >>= fun repo ->
+    create_block1 ctxt >>= fun (ctxt, block1) ->
+    Store.freeze ctxt.index.repo ~max:[ block1 ] ~keep_max:true >>= fun () ->
+    let ctxt = { index = ctxt.index; tree = ctxt.tree; parents = [ block1 ] } in
+    create_block1a ctxt >>= fun (_ctxt, block1a) ->
+    Store.ro_sync repo;
+    check_block1 repo block1 >>= fun () ->
+    check_block1a repo block1a >>= fun () ->
+    Store.Repo.close ctxt.index.repo >>= fun () -> Store.Repo.close repo
+
   let tests =
     [
       Alcotest.test_case "Test simple freeze" `Quick (fun () ->
@@ -433,6 +488,10 @@ module Test = struct
           Lwt_main.run (test_close_and_reopen ()));
       Alcotest.test_case "Test ro store" `Quick (fun () ->
           Lwt_main.run (test_ro_read ()));
+      Alcotest.test_case "Test ro find after clear" `Quick (fun () ->
+          Lwt_main.run (test_ro_find_after_clear ()));
+      Alcotest.test_case "Test ro syncs" `Quick (fun () ->
+          Lwt_main.run (test_ro_syncs ()));
     ]
 end
 

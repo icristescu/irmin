@@ -14,6 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *)
 
+module IO = Layers_IO.Unix
+
 module type S = sig
   include Inode.S
 
@@ -33,6 +35,8 @@ module type S = sig
     string ->
     Lwt_mutex.t ->
     bool ->
+    IO.t ->
+    int64 ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -66,6 +70,8 @@ module type S = sig
   val flip_upper : 'a t -> unit
 
   val current_upper : 'a t -> 'a U.t
+
+  val ro_sync : 'a t -> bool -> int64 -> unit
 end
 
 module Make

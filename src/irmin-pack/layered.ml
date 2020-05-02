@@ -19,6 +19,7 @@ let src = Logs.Src.create "irmin.layered" ~doc:"Irmin layered store"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
+module IO = Layers_IO.Unix
 open Lwt.Infix
 
 module type LAYERED_S = sig
@@ -40,6 +41,8 @@ module type LAYERED_S = sig
     string ->
     Lwt_mutex.t ->
     bool ->
+    IO.t ->
+    int64 ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -79,6 +82,8 @@ module type LAYERED_S = sig
   val lower : 'a t -> [ `Read ] L.t
 
   val flip_upper : 'a t -> unit
+
+  val ro_sync : 'a t -> bool -> int64 -> unit
 end
 
 module type CA = sig
@@ -154,6 +159,9 @@ module Content_addressable
     mutable flip : bool;
     uppers : 'a U.t * 'a U.t;
     lock : Lwt_mutex.t;
+    readonly : bool;
+    flip_file : IO.t;
+    mutable generation : int64;
   }
 
   let current_upper t = if t.flip then fst t.uppers else snd t.uppers
@@ -168,9 +176,18 @@ module Content_addressable
 
   let batch_lower t f = L.batch t.lower f
 
-  let v upper1 upper0 ?fresh ?readonly ?lru_size ~index root lock flip =
-    L.v ?fresh ?readonly ?lru_size ~index root >|= fun lower ->
-    { lower; flip; uppers = (upper1, upper0); lock }
+  let v upper1 upper0 ?fresh ?(readonly = false) ?lru_size ~index root lock flip
+      flip_file generation =
+    L.v ?fresh ~readonly ?lru_size ~index root >|= fun lower ->
+    {
+      lower;
+      flip;
+      uppers = (upper1, upper0);
+      lock;
+      readonly;
+      flip_file;
+      generation;
+    }
 
   let add t v =
     Lwt_mutex.with_lock t.lock (fun () ->
@@ -191,50 +208,115 @@ module Content_addressable
         U.unsafe_append upper k v;
         Lwt.return_unit)
 
-  (* RO instances do not know which of the two uppers is in use by RW, so find
-     (and mem) has to look in both uppers. *)
+  (** RO updates flip on generation change only, which happens at the end of the
+      freeze. This is to ensure that RO does not try to read the new upper
+      first, while the max commit is being copied: it can lead to the value
+      being in index (due to a merge) and not yet in pack. During a freeze, RO
+      looks for the latest values in the previous upper and for the older ones
+      in the current upper. *)
+  let ro_sync t flip generation =
+    if t.generation <> generation then (
+      Log.debug (fun l -> l "ro_sync both uppers generation change");
+      U.ro_sync (fst t.uppers);
+      U.ro_sync (snd t.uppers);
+      t.flip <- flip;
+      t.generation <- generation )
+    else if t.flip <> flip then (
+      Log.debug (fun l -> l "ro_sync both uppers flip change");
+      U.ro_sync (fst t.uppers);
+      U.ro_sync (snd t.uppers) )
+    else (
+      Log.debug (fun l -> l "ro_sync current");
+      let current = current_upper t in
+      U.ro_sync current );
+    L.ro_sync t.lower
+
+  let rec ro_find ~find_uppers t k =
+    try find_uppers t k
+    with e ->
+      let generation = IO.read_generation t.flip_file in
+      if t.generation <> generation then (
+        Log.debug (fun l -> l "retry find");
+        let flip = IO.read_flip t.flip_file in
+        ro_sync t flip generation;
+        ro_find ~find_uppers t k )
+      else (
+        Log.debug (fun l -> l "not generation problem");
+        raise e )
+
+  let rec ro_find_lwt ~find_uppers t k =
+    Lwt.catch
+      (fun () -> find_uppers t k)
+      (fun exn ->
+        let generation = IO.read_generation t.flip_file in
+        if t.generation <> generation then (
+          Log.debug (fun l -> l "retry find_lwt");
+          let flip = IO.read_flip t.flip_file in
+          ro_sync t flip generation;
+          ro_find_lwt ~find_uppers t k )
+        else (
+          Log.debug (fun l -> l "find_lwt not generation problem");
+          Lwt.fail exn ))
+
   let find t k =
-    let current = current_upper t in
-    let previous = previous_upper t in
-    Log.debug (fun l -> l "find in %s" (log_current_upper t));
-    U.find current k >>= function
+    let find_uppers t k =
+      let current = current_upper t in
+      let previous = previous_upper t in
+      Log.debug (fun l -> l "find in %s" (log_current_upper t));
+      U.find current k >>= function
+      | Some v -> Lwt.return_some v
+      | None ->
+          Log.debug (fun l -> l "find in %s" (log_previous_upper t));
+          U.find previous k
+    in
+    (if t.readonly then ro_find_lwt ~find_uppers t k else find_uppers t k)
+    >>= function
     | Some v -> Lwt.return_some v
-    | None -> (
-        Log.debug (fun l -> l "find in %s" (log_previous_upper t));
-        U.find previous k >>= function
-        | Some v -> Lwt.return_some v
-        | None ->
-            Log.debug (fun l -> l "find in lower");
-            L.find t.lower k )
+    | None ->
+        Log.debug (fun l -> l "find in lower");
+        L.find t.lower k
 
   let unsafe_find t k =
-    let current = current_upper t in
-    let previous = previous_upper t in
-    Log.debug (fun l -> l "unsafe_find in %s" (log_current_upper t));
-    match U.unsafe_find current k with
+    let find_uppers t k =
+      let current = current_upper t in
+      let previous = previous_upper t in
+      Log.debug (fun l -> l "unsafe_find in %s" (log_current_upper t));
+      match U.unsafe_find current k with
+      | Some v -> Some v
+      | None ->
+          Log.debug (fun l -> l "unsafe_find in %s" (log_previous_upper t));
+          U.unsafe_find previous k
+    in
+    let v = if t.readonly then ro_find ~find_uppers t k else find_uppers t k in
+    match v with
     | Some v -> Some v
-    | None -> (
-        Log.debug (fun l -> l "unsafe_find in %s" (log_previous_upper t));
-        match U.unsafe_find previous k with
-        | Some v -> Some v
-        | None ->
-            Log.debug (fun l -> l "unsafe_find in lower");
-            L.unsafe_find t.lower k )
+    | None ->
+        Log.debug (fun l -> l "unsafe_find in lower");
+        L.unsafe_find t.lower k
 
   let mem t k =
-    let current = current_upper t in
-    let previous = previous_upper t in
-    U.mem current k >>= function
+    let find_uppers t k =
+      let current = current_upper t in
+      let previous = previous_upper t in
+      U.mem current k >>= function
+      | true -> Lwt.return_true
+      | false -> U.mem previous k
+    in
+    (if t.readonly then ro_find_lwt ~find_uppers t k else find_uppers t k)
+    >>= function
     | true -> Lwt.return_true
-    | false -> (
-        U.mem previous k >>= function
-        | true -> Lwt.return_true
-        | false -> L.mem t.lower k )
+    | false -> L.mem t.lower k
 
   let unsafe_mem t k =
-    let current = current_upper t in
-    let previous = previous_upper t in
-    U.unsafe_mem current k || U.unsafe_mem previous k || L.unsafe_mem t.lower k
+    let find_uppers t k =
+      let current = current_upper t in
+      let previous = previous_upper t in
+      U.unsafe_mem current k || U.unsafe_mem previous k
+    in
+    let found =
+      if t.readonly then ro_find ~find_uppers t k else find_uppers t k
+    in
+    found || L.unsafe_mem t.lower k
 
   let mem_lower t k = L.mem t.lower k
 
@@ -385,6 +467,7 @@ module Atomic_write (K : Irmin.Branch.S) (A : AW with type key = K.t) : sig
     string ->
     Lwt_mutex.t ->
     bool ->
+    IO.t ->
     t Lwt.t
 
   val copy :
@@ -407,6 +490,8 @@ end = struct
     mutable flip : bool;
     uppers : U.t * U.t;
     lock : Lwt_mutex.t;
+    readonly : bool;
+    flip_file : IO.t;
   }
 
   let current_upper t = if t.flip then fst t.uppers else snd t.uppers
@@ -417,9 +502,6 @@ end = struct
 
   let log_previous_upper t = if t.flip then "upper0" else "upper1"
 
-  (* RO instances do not know which of the two uppers is in use by RW, so find
-     (and mem) has to look in both uppers. TODO if branch exists in both
-     uppers, then we have to check which upper is in use by RW. *)
   let mem t k =
     let current = current_upper t in
     let previous = previous_upper t in
@@ -503,9 +585,9 @@ end = struct
     U.close (fst t.uppers) >>= fun () ->
     U.close (snd t.uppers) >>= fun () -> L.close t.lower
 
-  let v upper1 upper0 ?fresh ?readonly file lock flip =
-    L.v ?fresh ?readonly file >|= fun lower ->
-    { lower; flip; uppers = (upper1, upper0); lock }
+  let v upper1 upper0 ?fresh ?(readonly = false) file lock flip flip_file =
+    L.v ?fresh ~readonly file >|= fun lower ->
+    { lower; flip; uppers = (upper1, upper0); lock; readonly; flip_file }
 
   (** Do not copy branches that point to commits not copied. *)
   let copy t ~mem_commit_lower ~mem_commit_upper =
