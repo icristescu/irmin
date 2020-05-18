@@ -4,6 +4,8 @@ type t = {
   mutable copied_nodes : int list;
   mutable copied_commits : int list;
   mutable copied_branches : int list;
+  mutable pause_copy : int;
+  mutable pause_add : int;
 }
 (** The type for stats for a store S.
 
@@ -47,3 +49,7 @@ val get_current_freeze : unit -> current_freeze
 val add : unit -> unit
 
 val get_adds : unit -> int
+
+val pause_copy : unit -> unit
+
+val pause_add : unit -> unit

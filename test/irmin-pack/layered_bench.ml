@@ -166,6 +166,18 @@ let no_freeze =
   let doc = Arg.info ~doc:"Without freeze." [ "f"; "no_freeze" ] in
   Arg.(value @@ opt bool false doc)
 
+let pause_copy =
+  let doc =
+    Arg.info ~doc:"Pause worker thread every n copies." [ "p"; "pause_copy" ]
+  in
+  Arg.(value @@ opt int 0 doc)
+
+let pause_add =
+  let doc =
+    Arg.info ~doc:"Pause main thread every n adds." [ "a"; "pause_add" ]
+  in
+  Arg.(value @@ opt int 0 doc)
+
 type config = {
   ncommits : int;
   nbatches : int;
@@ -177,6 +189,8 @@ type config = {
   keep_max : bool;
   reader : bool;
   no_freeze : bool;
+  pause_copy : int;
+  pause_add : int;
 }
 
 let index_log_size = Some 1_000
@@ -231,9 +245,9 @@ module FSHelper = struct
 end
 
 let configure_store ?(readonly = false) ?(fresh = true)
-    ?(keep_max = Conf.keep_max) root =
+    ?(keep_max = Conf.keep_max) ?(pause_copy = 0) ?(pause_add = 0) root =
   let conf = Irmin_pack.config ~readonly ?index_log_size ~fresh root in
-  Irmin_pack.config_layers ~conf ~keep_max ()
+  Irmin_pack.config_layers ~conf ~keep_max ~pause_copy ~pause_add ()
 
 let init config =
   rm_dir config.root;
@@ -333,13 +347,18 @@ let run_batches config repo init_commit =
       (if config.with_metrics then add_metrics () else Lwt.return_unit)
       >>= fun () ->
       with_timer (fun () -> freeze config repo c) >>= fun (_t, ()) ->
-      Fmt.epr "freeze\n%!";
+      let stats = Irmin_layers.Stats.get () in
+      Fmt.epr "freeze pause_add = %d pause_copy = %d\n%!" stats.pause_add
+        stats.pause_copy;
       go c (i + 1)
   in
   go init_commit 0
 
 let rw config =
-  let conf = configure_store config.root ~keep_max:config.keep_max in
+  let conf =
+    configure_store config.root ~keep_max:config.keep_max
+      ~pause_copy:config.pause_copy ~pause_add:config.pause_add
+  in
   Store.Repo.v conf >>= fun repo ->
   Store.master repo >|= fun store -> (repo, store)
 
@@ -414,7 +433,7 @@ let run config =
   if config.with_metrics then add_metrics () else Lwt.return_unit
 
 let main ncommits nbatches depth clear with_metrics squash keep_max reader
-    no_freeze =
+    no_freeze pause_copy pause_add =
   let config =
     {
       ncommits;
@@ -427,16 +446,18 @@ let main ncommits nbatches depth clear with_metrics squash keep_max reader
       keep_max;
       reader;
       no_freeze;
+      pause_copy;
+      pause_add;
     }
   in
   Fmt.epr
     "Benchmarking ./%s with depth = %d, ncommits/batch = %d, nbatches = %d, \
-     clear = %b, metrics = %b, squash = %b, keep_max = %b reader = %b \
-     no_freeze = %b \n\
+     clear = %b, metrics = %b, squash = %b, keep_max = %b, reader = %b \
+     no_freeze = %b, pause_copy = %d, pause_add =%d \n\
      %!"
     config.root config.depth config.ncommits config.nbatches config.clear
     config.with_metrics config.squash config.keep_max config.reader
-    config.no_freeze;
+    config.no_freeze config.pause_copy config.pause_add;
   Lwt_main.run (run config)
 
 let main_term =
@@ -450,7 +471,9 @@ let main_term =
     $ squash
     $ keep_max
     $ reader
-    $ no_freeze)
+    $ no_freeze
+    $ pause_copy
+    $ pause_add)
 
 let () =
   let info = Term.info "Benchmarks for layered store" in

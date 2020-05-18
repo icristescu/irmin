@@ -23,6 +23,8 @@ module type LAYERED_S = sig
     bool ->
     IO.t ->
     int64 ->
+    int option ->
+    int option ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -64,6 +66,8 @@ module type LAYERED_S = sig
   val flip_upper : 'a t -> unit
 
   val ro_sync : 'a t -> bool -> int64 -> unit
+
+  val pause_copy : 'a t -> int option
 end
 
 module Content_addressable

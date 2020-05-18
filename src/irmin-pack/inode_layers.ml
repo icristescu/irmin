@@ -45,6 +45,8 @@ module type S = sig
     bool ->
     IO.t ->
     int64 ->
+    int option ->
+    int option ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -853,12 +855,27 @@ module Make
     let find = unsafe_find t in
     { Val.find; v }
 
+  let pause pause_copy =
+    match pause_copy with
+    | None -> Lwt.return_unit
+    | Some pause_copy ->
+        let current = Stats.get_current_freeze () in
+        if
+          (current.contents + current.nodes + current.commits) mod pause_copy
+          = 0
+        then (
+          Log.debug (fun l -> l "pausing copy thread...");
+          Stats.pause_copy ();
+          Lwt.pause () )
+        else Lwt.return_unit
+
   let copy ~add ~mem ~aux t k =
     Inode.U.find (Inode.previous_upper t) k >>= function
     | None -> Lwt.return_unit
     | Some v ->
         let v' = lift t v in
         aux v' >>= fun () ->
+        pause (Inode.pause_copy t) >>= fun () ->
         Stats.copy_nodes ();
         Inode.Val.save ~add ~mem v'.Val.v
 

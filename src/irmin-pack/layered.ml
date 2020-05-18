@@ -43,6 +43,8 @@ module type LAYERED_S = sig
     bool ->
     IO.t ->
     int64 ->
+    int option ->
+    int option ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t
@@ -84,6 +86,8 @@ module type LAYERED_S = sig
   val flip_upper : 'a t -> unit
 
   val ro_sync : 'a t -> bool -> int64 -> unit
+
+  val pause_copy : 'a t -> int option
 end
 
 module type CA = sig
@@ -92,6 +96,8 @@ module type CA = sig
   module Key : Irmin.Hash.TYPED with type t = key and type value = value
 end
 
+module Stats = Irmin_layers.Stats
+
 exception Copy_error of string
 
 module Copy
@@ -99,7 +105,21 @@ module Copy
     (SRC : Pack.S with type key = Key.t)
     (DST : Pack.S with type key = SRC.key and type value = SRC.value) =
 struct
-  let add_to_dst add (k, v) = add k v
+  let pause pause_copy =
+    match pause_copy with
+    | None -> Lwt.return_unit
+    | Some pause_copy ->
+        let current = Stats.get_current_freeze () in
+        if
+          (current.contents + current.nodes + current.commits) mod pause_copy
+          = 0
+        then (
+          Log.debug (fun l -> l "pausing copy thread...");
+          Stats.pause_copy ();
+          Lwt.pause () )
+        else Lwt.return_unit
+
+  let add_to_dst add (k, v) pause_copy = pause pause_copy >>= fun () -> add k v
 
   let already_in_dst ~dst k =
     DST.mem dst k >|= function
@@ -108,19 +128,18 @@ struct
         true
     | false -> false
 
-  let copy ~src ~dst ~aux str k =
+  let copy ~src ~dst ~aux str k pause_copy =
     Log.debug (fun l -> l "copy %s %a" str (Irmin.Type.pp Key.t) k);
     SRC.find src k >>= function
     | None -> Lwt.return_unit
-    | Some v -> aux v >>= fun () -> add_to_dst (DST.unsafe_add dst) (k, v)
+    | Some v ->
+        aux v >>= fun () -> add_to_dst (DST.unsafe_add dst) (k, v) pause_copy
 
-  let check_and_copy ~src ~dst ~aux str k =
+  let check_and_copy ~src ~dst ~aux str k pause_copy =
     already_in_dst ~dst k >>= function
     | true -> Lwt.return_false
-    | false -> copy ~src ~dst ~aux str k >|= fun () -> true
+    | false -> copy ~src ~dst ~aux str k pause_copy >|= fun () -> true
 end
-
-module Stats = Irmin_layers.Stats
 
 module Content_addressable
     (H : Irmin.Hash.S)
@@ -152,7 +171,11 @@ module Content_addressable
     readonly : bool;
     flip_file : IO.t;
     mutable generation : int64;
+    pause_copy : int option;
+    pause_add : int option;
   }
+
+  let pause_copy t = t.pause_copy
 
   let current_upper t = if t.flip then fst t.uppers else snd t.uppers
 
@@ -167,7 +190,7 @@ module Content_addressable
   let batch_lower t f = L.batch t.lower f
 
   let v upper1 upper0 ?fresh ?(readonly = false) ?lru_size ~index root lock flip
-      flip_file generation =
+      flip_file generation pause_copy pause_add =
     L.v ?fresh ~readonly ?lru_size ~index root >|= fun lower ->
     {
       lower;
@@ -177,25 +200,44 @@ module Content_addressable
       readonly;
       flip_file;
       generation;
+      pause_copy;
+      pause_add;
     }
 
+  let pause t =
+    match t.pause_add with
+    | None -> Lwt.return_unit
+    | Some pause_add ->
+        let adds = Stats.get_adds () in
+        if adds mod pause_add = 0 then (
+          Log.debug (fun l -> l "pausing main thread...");
+          Stats.pause_add ();
+          Lwt.pause () )
+        else Lwt.return_unit
+
   let add t v =
+    pause t >>= fun () ->
     Lwt_mutex.with_lock t.lock (fun () ->
         Log.debug (fun l -> l "add in %s" (log_current_upper t));
         let upper = current_upper t in
+        Stats.add ();
         U.add upper v)
 
   let unsafe_add t k v =
+    pause t >>= fun () ->
     Lwt_mutex.with_lock t.lock (fun () ->
         Log.debug (fun l -> l "unsafe_add in %s" (log_current_upper t));
         let upper = current_upper t in
+        Stats.add ();
         U.unsafe_add upper k v)
 
   let unsafe_append t k v =
+    pause t >>= fun () ->
     Lwt_mutex.with_lock t.lock (fun () ->
         Log.debug (fun l -> l "unsafe_append in %s" (log_current_upper t));
         let upper = current_upper t in
         U.unsafe_append upper k v;
+        Stats.add ();
         Lwt.return_unit)
 
   (** RO updates flip on generation change only, which happens at the end of the
@@ -378,10 +420,12 @@ module Content_addressable
 
   let check_and_copy_to_lower t ~dst ~aux str k =
     CopyLower.check_and_copy ~src:(previous_upper t) ~dst ~aux str k
+      t.pause_copy
     >|= stats str
 
   let check_and_copy_to_current t ~dst ~aux str (k : key) =
     CopyUpper.check_and_copy ~src:(previous_upper t) ~dst ~aux str k
+      t.pause_copy
     >|= stats str
 
   let check_and_copy :

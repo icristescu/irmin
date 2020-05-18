@@ -37,6 +37,8 @@ module type S = sig
     bool ->
     IO.t ->
     int64 ->
+    int option ->
+    int option ->
     'a t Lwt.t
 
   val batch : unit -> 'a Lwt.t

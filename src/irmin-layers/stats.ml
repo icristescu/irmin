@@ -4,6 +4,8 @@ type t = {
   mutable copied_nodes : int list;
   mutable copied_commits : int list;
   mutable copied_branches : int list;
+  mutable pause_copy : int;
+  mutable pause_add : int;
 }
 
 type i = {
@@ -23,6 +25,8 @@ let fresh_stats () =
       copied_nodes = [];
       copied_commits = [];
       copied_branches = [];
+      pause_copy = 0;
+      pause_add = 0;
     }
   in
   { t; contents = 0; nodes = 0; commits = 0; branches = 0; adds = 0 }
@@ -42,6 +46,8 @@ let reset_stats () =
   stats.t.copied_nodes <- [];
   stats.t.copied_commits <- [];
   stats.t.copied_branches <- [];
+  stats.t.pause_add <- 0;
+  stats.t.pause_copy <- 0;
   reset_stats_i ()
 
 let get () =
@@ -51,6 +57,8 @@ let get () =
     copied_nodes = List.rev (stats.nodes :: stats.t.copied_nodes);
     copied_commits = List.rev (stats.commits :: stats.t.copied_commits);
     copied_branches = List.rev (stats.branches :: stats.t.copied_branches);
+    pause_copy = stats.t.pause_copy;
+    pause_add = stats.t.pause_add;
   }
 
 type current_freeze = {
@@ -88,3 +96,7 @@ let copy_branches () = stats.branches <- succ stats.branches
 let add () = stats.adds <- succ stats.adds
 
 let get_adds () = stats.adds
+
+let pause_copy () = stats.t.pause_copy <- succ stats.t.pause_copy
+
+let pause_add () = stats.t.pause_add <- succ stats.t.pause_add

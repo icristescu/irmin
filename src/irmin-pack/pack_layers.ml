@@ -15,6 +15,10 @@ module Default = struct
   let upper_root0 = "upper0"
 
   let keep_max = false
+
+  let pause_copy = 0
+
+  let pause_add = 0
 end
 
 module Conf = Irmin.Private.Conf
@@ -43,13 +47,28 @@ let keep_max_key =
 
 let get_keep_max conf = Conf.get conf keep_max_key
 
+let pause_copy_key =
+  Conf.key ~doc:"Pause the worker thread at every n copies." "pause-copy"
+    Conf.int Default.pause_copy
+
+let pause_copy conf = Conf.get conf pause_copy_key
+
+let pause_add_key =
+  Conf.key ~doc:"Pause the main thread at every n adds." "pause-add" Conf.int
+    Default.pause_add
+
+let pause_add conf = Conf.get conf pause_add_key
+
 let config_layers ?(conf = Conf.empty) ?(lower_root = Default.lower_root)
     ?(upper_root1 = Default.upper_root1) ?(upper_root0 = Default.upper_root0)
-    ?(keep_max = Default.keep_max) () =
+    ?(keep_max = Default.keep_max) ?(pause_copy = Default.pause_copy)
+    ?(pause_add = Default.pause_add) () =
   let config = Conf.add conf lower_root_key lower_root in
   let config = Conf.add config upper_root0_key upper_root0 in
   let config = Conf.add config upper_root1_key upper_root1 in
   let config = Conf.add config keep_max_key keep_max in
+  let config = Conf.add config pause_copy_key pause_copy in
+  let config = Conf.add config pause_add_key pause_add in
   config
 
 module IO = Layers_IO.Unix
@@ -265,14 +284,20 @@ struct
         let log_size = index_log_size config in
         let index = Index.v ~fresh ~readonly ~log_size root in
         let flip = if readonly then v_readonly flip generation else flip in
+        let pause_copy =
+          if pause_copy config = 0 then None else Some (pause_copy config)
+        in
+        let pause_add =
+          if pause_add config = 0 then None else Some (pause_add config)
+        in
         Contents.CA.v upper1.contents upper0.contents ~fresh ~readonly ~lru_size
-          ~index root reset_lock flip flip_file generation
+          ~index root reset_lock flip flip_file generation pause_copy pause_add
         >>= fun contents ->
         Node.CA.v upper1.node upper0.node ~fresh ~readonly ~lru_size ~index root
-          reset_lock flip flip_file generation
+          reset_lock flip flip_file generation pause_copy pause_add
         >>= fun node ->
         Commit.CA.v upper1.commit upper0.commit ~fresh ~readonly ~lru_size
-          ~index root reset_lock flip flip_file generation
+          ~index root reset_lock flip flip_file generation pause_copy pause_add
         >>= fun commit ->
         Branch.v upper1.branch upper0.branch ~fresh ~readonly root reset_lock
           flip flip_file
