@@ -57,7 +57,6 @@ module type S = sig
     'l layer_type * 'l ->
     [ `Read ] t ->
     aux:(value -> unit Lwt.t) ->
-    string ->
     key ->
     unit Lwt.t
 

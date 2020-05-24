@@ -99,17 +99,7 @@ module Copy
     (SRC : Pack.S with type key = Key.t)
     (DST : Pack.S with type key = SRC.key and type value = SRC.value) =
 struct
-  let add_to_dst name add dk (k, v) =
-    add v >>= fun k' ->
-    if not (Irmin.Type.equal dk k k') then
-      Fmt.kstrf
-        (fun x -> Lwt.fail (Copy_error x))
-        "%s import error: expected %a, got %a" name
-        Irmin.Type.(pp dk)
-        k
-        Irmin.Type.(pp dk)
-        k'
-    else Lwt.return_unit
+  let add_to_dst add (k, v) = add k v
 
   let already_in_dst ~dst k =
     DST.mem dst k >|= function
@@ -122,7 +112,7 @@ struct
     Log.debug (fun l -> l "copy %s %a" str (Irmin.Type.pp Key.t) k);
     SRC.find src k >>= function
     | None -> Lwt.return_unit
-    | Some v -> aux v >>= fun () -> add_to_dst str (DST.add dst) Key.t (k, v)
+    | Some v -> aux v >>= fun () -> add_to_dst (DST.unsafe_add dst) (k, v)
 
   let check_and_copy ~src ~dst ~aux str k =
     already_in_dst ~dst k >>= function

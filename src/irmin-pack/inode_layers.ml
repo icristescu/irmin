@@ -65,7 +65,6 @@ module type S = sig
     'l layer_type * 'l ->
     [ `Read ] t ->
     aux:(value -> unit Lwt.t) ->
-    string ->
     key ->
     unit Lwt.t
 
@@ -850,26 +849,16 @@ module Make
     let find = unsafe_find t in
     { Val.find; v }
 
-  let copy ~add ~mem ~aux t str k =
+  let copy ~add ~mem ~aux t k =
     Inode.U.find (Inode.previous_upper t) k >>= function
     | None -> Lwt.return_unit
     | Some v ->
         let v' = lift t v in
         aux v' >>= fun () ->
         Stats.copy_nodes ();
-        Inode.Val.save ~add ~mem v'.Val.v >>= fun () ->
-        let k' = hash v' in
-        if not (Irmin.Type.equal H.t k k') then
-          Fmt.kstrf
-            (fun x -> Lwt.fail (Layered.Copy_error x))
-            "%s import error: expected %a, got %a" str
-            Irmin.Type.(pp H.t)
-            k
-            Irmin.Type.(pp H.t)
-            k'
-        else Lwt.return_unit
+        Inode.Val.save ~add ~mem v'.Val.v
 
-  let check_and_copy_to_lower t ~dst ~aux str k =
+  let check_and_copy_to_lower t ~dst ~aux k =
     mem_lower t k >>= function
     | true -> Lwt.return_unit
     | false ->
@@ -878,9 +867,9 @@ module Make
           Lwt.return_unit
         in
         let mem k = Inode.L.unsafe_mem dst k in
-        copy ~add ~mem ~aux t str k
+        copy ~add ~mem ~aux t k
 
-  let check_and_copy_to_current t ~dst ~aux str k =
+  let check_and_copy_to_current t ~dst ~aux k =
     mem_current t k >>= function
     | true -> Lwt.return_unit
     | false ->
@@ -889,14 +878,13 @@ module Make
           Lwt.return_unit
         in
         let mem k = Inode.U.unsafe_mem dst k in
-        copy ~add ~mem ~aux t str k
+        copy ~add ~mem ~aux t k
 
   let check_and_copy :
       type l.
       l layer_type * l ->
       [ `Read ] t ->
       aux:(value -> unit Lwt.t) ->
-      string ->
       key ->
       unit Lwt.t =
    fun (ltype, dst) ->

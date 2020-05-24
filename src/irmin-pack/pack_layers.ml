@@ -441,9 +441,7 @@ struct
                 | _ -> Lwt.return_unit)
               (X.Node.Val.list v)
           in
-          let node k =
-            X.Node.CA.check_and_copy nodes t.X.Repo.node ~aux "Node" k
-          in
+          let node k = X.Node.CA.check_and_copy nodes t.X.Repo.node ~aux k in
           Repo.iter t ~min:[] ~max:[ root ] ~node ~skip
 
     let copy_commit ~copy_tree commits nodes contents t k =
