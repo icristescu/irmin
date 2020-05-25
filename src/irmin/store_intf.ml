@@ -136,6 +136,14 @@ module type S = sig
 
         It applies two functions while traversing the graph: [node] on the
         commits and [skip n] to not visit a commit [n]. *)
+
+    val iter_commits :
+      t ->
+      min:hash list ->
+      max:hash list ->
+      node:(hash -> unit Lwt.t) ->
+      skip:(hash -> bool Lwt.t) ->
+      unit Lwt.t
   end
 
   val empty : repo -> t Lwt.t

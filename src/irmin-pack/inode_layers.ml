@@ -614,23 +614,27 @@ module Make
 
       let add ~find t s v = add ~find ~copy:true t s v
 
+      let lwt_array_iter_s arr f =
+        let rec aux i =
+          if i = Array.length arr then Lwt.return_unit
+          else
+            let entry = arr.(i) in
+            f entry >>= fun () -> aux (i + 1)
+        in
+        aux 0
+
       let save ~add ~mem t =
         let rec aux ~seed t =
           Log.debug (fun l -> l "save seed:%d" seed);
           match t.v with
           | Values _ -> add (Lazy.force t.hash) (to_bin t)
           | Inodes n ->
-              let entries =
-                Array.fold_left
-                  (fun acc entry ->
-                    match entry with
-                    | Empty | Inode { tree = None; _ } -> acc
-                    | Inode ({ tree = Some t; _ } as i) ->
-                        let hash = hash_of_inode i in
-                        if mem hash then acc else aux ~seed:(seed + 1) t :: acc)
-                  [] n.entries
-              in
-              Lwt.join entries >>= fun () -> add (Lazy.force t.hash) (to_bin t)
+              lwt_array_iter_s n.entries (function
+                | Empty | Inode { tree = None; _ } -> Lwt.return_unit
+                | Inode ({ tree = Some t; _ } as i) ->
+                    let hash = hash_of_inode i in
+                    if mem hash then Lwt.return_unit else aux ~seed:(seed + 1) t)
+              >>= fun () -> add (Lazy.force t.hash) (to_bin t)
         in
         aux ~seed:0 t
     end

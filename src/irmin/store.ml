@@ -334,6 +334,20 @@ module Make (P : S.PRIVATE) = struct
 
     let iter t ~min ~max ~node ~skip =
       Graph.iter (graph_t t) ~min ~max ~node ~skip ()
+
+    let iter_commits t ~min ~max ~node ~skip =
+      let max = List.map (fun x -> `Commit x) max in
+      let min = List.map (fun x -> `Commit x) min in
+      let node = function `Commit x -> node x | _ -> Lwt.return_unit in
+      let skip = function `Commit x -> skip x | _ -> Lwt.return_false in
+      let pred = function
+        | `Commit k ->
+            H.parents (history_t t) k >|= fun parents ->
+            List.map (fun x -> `Commit x) parents
+        | _ -> Lwt.return_nil
+      in
+      let edge _ _ = Lwt.return_unit in
+      KGraph.iter ~pred ~min ~max ~node ~edge ~skip ~rev:true ()
   end
 
   type t = {

@@ -429,20 +429,16 @@ struct
         ~aux:(fun _ -> Lwt.return_unit)
         "Contents" k
 
-    let copy_tree ?(skip = fun _ -> Lwt.return_false) mem nodes contents t root
-        =
-      mem t.X.Repo.node root >>= function
-      | true -> Lwt.return_unit
-      | false ->
-          let aux v =
-            Lwt_list.iter_p
-              (function
-                | _, `Contents (k, _) -> copy_contents contents t k
-                | _ -> Lwt.return_unit)
-              (X.Node.Val.list v)
-          in
-          let node k = X.Node.CA.check_and_copy nodes t.X.Repo.node ~aux k in
-          Repo.iter t ~min:[] ~max:[ root ] ~node ~skip
+    let copy_tree ?(skip = fun _ -> Lwt.return_false) nodes contents t root =
+      let aux v =
+        Lwt_list.iter_s
+          (function
+            | _, `Contents (k, _) -> copy_contents contents t k
+            | _ -> Lwt.return_unit)
+          (X.Node.Val.list v)
+      in
+      let node k = X.Node.CA.check_and_copy nodes t.X.Repo.node ~aux k in
+      Repo.iter t ~min:[] ~max:[ root ] ~node ~skip
 
     let copy_commit ~copy_tree commits nodes contents t k =
       let aux c = copy_tree nodes contents t (X.Commit.Val.node c) in
@@ -451,7 +447,7 @@ struct
     module CopyToLower = struct
       let copy_tree nodes contents t root =
         let skip k = X.Node.CA.mem_lower t.X.Repo.node k in
-        copy_tree ~skip X.Node.CA.mem_lower nodes contents t root
+        copy_tree ~skip nodes contents t root
 
       let copy_commit commits nodes contents t k =
         copy_commit ~copy_tree commits nodes contents t k
@@ -464,7 +460,7 @@ struct
 
       let copy_max_commits t (max : commit list) =
         Log.debug (fun f -> f "copy max commits to lower");
-        Lwt_list.iter_p
+        Lwt_list.iter_s
           (fun k ->
             let h = Commit.hash k in
             batch_lower t (fun commits nodes contents ->
@@ -475,20 +471,20 @@ struct
                   t h))
           max
 
-      let copy_slice t slice =
-        batch_lower t (fun commits nodes contents ->
-            X.Slice.iter slice (function
-              | `Commit (k, _) ->
-                  copy_commit
-                    (X.Commit.CA.Lower, commits)
-                    (X.Node.CA.Lower, nodes)
-                    (X.Contents.CA.Lower, contents)
-                    t k
-              | _ -> Lwt.return_unit))
-
       let copy t ~min ~max () =
         Log.debug (fun f -> f "copy to lower");
-        Repo.export ~full:false ~min ~max:(`Max max) t >>= copy_slice t
+        let max = List.map (fun x -> Commit.hash x) max in
+        let min = List.map (fun x -> Commit.hash x) min in
+        let skip _ = Lwt.return_false in
+        batch_lower t (fun commits nodes contents ->
+            let node x =
+              copy_commit
+                (X.Commit.CA.Lower, commits)
+                (X.Node.CA.Lower, nodes)
+                (X.Contents.CA.Lower, contents)
+                t x
+            in
+            Repo.iter_commits t ~min ~max ~node ~skip)
     end
 
     module CopyToUpper = struct
@@ -502,55 +498,56 @@ struct
       let copy_max_commits t max =
         Log.debug (fun f ->
             f "copy max commits to current %s" (X.Repo.log_current_upper t));
-        Lwt_list.iter_p
+        Lwt_list.iter_s
           (fun k ->
             let h = Commit.hash k in
             batch_current t (fun contents nodes commits ->
-                copy_commit
-                  ~copy_tree:(copy_tree X.Node.CA.mem_current)
+                copy_commit ~copy_tree
                   (X.Commit.CA.Upper, commits)
                   (X.Node.CA.Upper, nodes)
                   (X.Contents.CA.Upper, contents)
                   t h))
           max
 
-      let copy_slice t slice =
-        X.Slice.iter slice (function
-          | `Commit (k, _) ->
-              batch_current t (fun contents nodes commits ->
-                  copy_commit
-                    ~copy_tree:(copy_tree X.Node.CA.mem_current)
-                    (X.Commit.CA.Upper, commits)
-                    (X.Node.CA.Upper, nodes)
-                    (X.Contents.CA.Upper, contents)
-                    t k)
-          | _ -> Lwt.return_unit)
+      let copy t ~min ~max () =
+        let skip _ = Lwt.return_false in
+        batch_current t (fun contents nodes commits ->
+            let node x =
+              copy_commit ~copy_tree
+                (X.Commit.CA.Upper, commits)
+                (X.Node.CA.Upper, nodes)
+                (X.Contents.CA.Upper, contents)
+                t x
+            in
+            Repo.iter_commits t ~min ~max ~node ~skip)
 
-      let empty_intersection slice commits =
-        let ok = ref true in
-        let includes k =
-          List.exists (fun k' -> Irmin.Type.equal Hash.t k k') commits
+      let includes commits k =
+        List.exists (fun k' -> Irmin.Type.equal Hash.t k k') commits
+
+      let non_empty_intersection t min head =
+        let skip _ = Lwt.return_false in
+        let ok = ref false in
+        let node x =
+          if includes min x then ok := true;
+          Lwt.return_unit
         in
-        X.Slice.iter slice (function
-          | `Commit (k, _) ->
-              if includes k then ok := false;
-              Lwt.return_unit
-          | _ -> Lwt.return_unit)
-        >|= fun () -> !ok
+        Repo.iter_commits t ~min ~max:[ head ] ~node ~skip >|= fun () -> !ok
 
       (** Copy the heads that include a max commit *)
       let copy_heads t max heads =
-        Log.debug (fun f ->
-            f "copy heads to current %s" (X.Repo.log_current_upper t));
-        Lwt_list.iter_p
-          (fun head ->
-            Repo.export ~full:false ~min:max ~max:(`Max [ head ]) t
-            >>= fun slice ->
-            List.map (fun c -> Commit.hash c) max |> empty_intersection slice
-            >>= function
-            | false -> copy_slice t slice
-            | true -> Lwt.return_unit)
-          heads
+        let max = List.map (fun x -> Commit.hash x) max in
+        let heads = List.map (fun x -> Commit.hash x) heads in
+        Lwt_list.fold_left_s
+          (fun acc head ->
+            (*if a head is a max commit then already copied*)
+            if includes max head then Lwt.return acc
+            else
+              (*if a head is after the max commit then copy it*)
+              non_empty_intersection t max head >|= function
+              | true -> head :: acc
+              | false -> acc)
+          [] heads
+        >>= fun heads -> copy t ~min:max ~max:heads ()
     end
   end
 
