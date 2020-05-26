@@ -347,7 +347,7 @@ module Make (P : S.PRIVATE) = struct
         | _ -> Lwt.return_nil
       in
       let edge _ _ = Lwt.return_unit in
-      KGraph.iter ~pred ~min ~max ~node ~edge ~skip ~rev:true ()
+      KGraph.iter ~pred ~min ~max ~node ~edge ~skip ~rev:false ()
   end
 
   type t = {

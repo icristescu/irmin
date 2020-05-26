@@ -81,6 +81,8 @@ module type S = sig
   val current_upper : 'a t -> 'a U.t
 
   val ro_sync : 'a t -> bool -> int64 -> unit
+
+  val end_freeze : 'a t -> unit
 end
 
 module Stats = Irmin_layers.Stats
@@ -845,6 +847,8 @@ module Make
   let current_upper = Inode.current_upper
 
   let ro_sync = Inode.ro_sync
+
+  let end_freeze = Inode.end_freeze
 
   type 'a layer_type =
     | Upper : [ `Read | `Write ] U.t layer_type

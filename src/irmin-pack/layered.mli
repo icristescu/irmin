@@ -68,6 +68,8 @@ module type LAYERED_S = sig
   val ro_sync : 'a t -> bool -> int64 -> unit
 
   val pause_copy : 'a t -> int option
+
+  val end_freeze : 'a t -> unit
 end
 
 module Content_addressable

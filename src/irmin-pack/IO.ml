@@ -64,6 +64,7 @@ module Unix : S = struct
 
     let really_write fd buf =
       let rec aux off len =
+        Thread.yield ();
         let w = Unix.write fd buf off len in
         if w = 0 || w = len then () else (aux [@tailcall]) (off + w) (len - w)
       in
@@ -71,6 +72,7 @@ module Unix : S = struct
 
     let really_read fd len buf =
       let rec aux off len =
+        Thread.yield ();
         let r = Unix.read fd buf off len in
         if r = 0 then off (* end of file *)
         else if r = len then off + r

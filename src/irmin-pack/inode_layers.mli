@@ -73,6 +73,8 @@ module type S = sig
   val current_upper : 'a t -> 'a U.t
 
   val ro_sync : 'a t -> bool -> int64 -> unit
+
+  val end_freeze : 'a t -> unit
 end
 
 module Make

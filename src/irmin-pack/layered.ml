@@ -88,6 +88,8 @@ module type LAYERED_S = sig
   val ro_sync : 'a t -> bool -> int64 -> unit
 
   val pause_copy : 'a t -> int option
+
+  val end_freeze : 'a t -> unit
 end
 
 module type CA = sig
@@ -110,10 +112,10 @@ struct
     | None -> Lwt.return_unit
     | Some pause_copy ->
         let current = Stats.get_current_freeze () in
-        if
-          (current.contents + current.nodes + current.commits) mod pause_copy
-          = 0
-        then (
+        let copied_objects =
+          current.contents + current.nodes + current.commits
+        in
+        if copied_objects mod pause_copy = 0 && copied_objects <> 0 then (
           Log.debug (fun l -> l "pausing copy thread...");
           Stats.pause_copy ();
           Lwt.pause () )
@@ -173,6 +175,7 @@ module Content_addressable
     mutable generation : int64;
     pause_copy : int option;
     pause_add : int option;
+    mutable async_freeze : bool;
   }
 
   let pause_copy t = t.pause_copy
@@ -202,18 +205,21 @@ module Content_addressable
       generation;
       pause_copy;
       pause_add;
+      async_freeze = false;
     }
 
   let pause t =
-    match t.pause_add with
-    | None -> Lwt.return_unit
-    | Some pause_add ->
-        let adds = Stats.get_adds () in
-        if adds mod pause_add = 0 then (
-          Log.debug (fun l -> l "pausing main thread...");
-          Stats.pause_add ();
-          Lwt.pause () )
-        else Lwt.return_unit
+    if t.async_freeze then
+      match t.pause_add with
+      | None -> Lwt.return_unit
+      | Some pause_add ->
+          let adds = Stats.get_adds () in
+          if adds mod pause_add = 0 then (
+            Log.debug (fun l -> l "pausing main thread...");
+            Stats.pause_add ();
+            Lwt.pause () )
+          else Lwt.return_unit
+    else Lwt.return_unit
 
   let add t v =
     pause t >>= fun () ->
@@ -289,6 +295,9 @@ module Content_addressable
         else (
           Log.debug (fun l -> l "find_lwt not generation problem");
           Lwt.fail exn ))
+
+  let _pause t =
+    if t.async_freeze && not t.readonly then Lwt.pause () else Lwt.return_unit
 
   let find t k =
     let find_uppers t k =
@@ -447,7 +456,10 @@ module Content_addressable
 
   let flip_upper t =
     Log.debug (fun l -> l "flip_upper to %s" (log_previous_upper t));
-    t.flip <- not t.flip
+    t.flip <- not t.flip;
+    t.async_freeze <- true
+
+  let end_freeze t = t.async_freeze <- false
 end
 
 module type LAYERED_MAKER = sig

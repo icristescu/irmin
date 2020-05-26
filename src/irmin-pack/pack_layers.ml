@@ -348,7 +348,10 @@ struct
         Branch.U.clear upper.branch >|= fun () ->
         let generation = Int64.succ t.generation in
         t.generation <- generation;
-        IO.write_generation generation t.flip_file
+        IO.write_generation generation t.flip_file;
+        Contents.CA.end_freeze (contents_t t);
+        Node.CA.end_freeze (snd (node_t t));
+        Commit.CA.end_freeze (snd (commit_t t))
 
       let flip_upper t =
         t.flip <- not t.flip;
@@ -606,7 +609,6 @@ struct
     else Lwt.return_unit )
     >|= fun () ->
     Lwt.async (fun () ->
-        Lwt.pause () >>= fun () ->
         may (fun f -> f `Before_Copy) hook >>= fun () ->
         copy t ~keep_max ~squash ~min ~max ~heads () >>= function
         | Ok () ->

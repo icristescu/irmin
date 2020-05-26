@@ -37,8 +37,7 @@ let reset_stats_i () =
   stats.contents <- 0;
   stats.nodes <- 0;
   stats.commits <- 0;
-  stats.branches <- 0;
-  stats.adds <- 0
+  stats.branches <- 0
 
 let reset_stats () =
   stats.t.nb_freeze <- 0;
@@ -78,6 +77,7 @@ let get_current_freeze () =
 
 let freeze () =
   stats.t.nb_freeze <- succ stats.t.nb_freeze;
+  stats.adds <- 0;
   if stats.t.nb_freeze <> 1 then (
     stats.t.copied_contents <- stats.contents :: stats.t.copied_contents;
     stats.t.copied_nodes <- stats.nodes :: stats.t.copied_nodes;
