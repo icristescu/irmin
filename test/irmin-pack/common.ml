@@ -6,11 +6,21 @@ let get = function Some x -> x | None -> Alcotest.fail "None"
 let sha1 x = Irmin.Hash.SHA1.hash (fun f -> f x)
 
 let rm_dir root =
+  Logs.debug (fun l -> l "rm dir %s" root);
   if Sys.file_exists root then (
     let cmd = Printf.sprintf "rm -rf %s" root in
     Logs.info (fun l -> l "exec: %s\n%!" cmd);
     let _ = Sys.command cmd in
     ())
+  else Logs.debug (fun l -> l "doesnot exists dir %s" root)
+
+let index_log_size = Some 1_000
+
+module Conf = struct
+  let entries = 32
+
+  let stable_hash = 256
+end
 
 module S = struct
   include Irmin.Contents.String
