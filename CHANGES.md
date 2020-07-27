@@ -27,10 +27,13 @@
     let encode_bin = Type.(unstage (encode_bin ty))
     let _ = <begin loop> ... encode_bin foo ... <end loop>
     ```
+  - Added a `clear` function for stores (#1015, @icristescu)
 
 - **irmin-pack**:
   - Added `index_throttle` option to `Irmin_pack.config`, which exposes the
     memory throttle feature of `Index` in `Irmin-Pack`. (#1049, @icristescu)
+  - Added a migration function from version 1 to version 2, called automatically
+    when a store in version 1 is opened (#1015, @icristescu)
 
 #### Changed
 
