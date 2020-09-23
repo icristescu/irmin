@@ -4,7 +4,7 @@ let src =
 module Log = (val Logs.src_log src : Logs.LOG)
 
 module Make_intermediary
-    (Conf : Inode_intf.CONFIG)
+    (Conf : Config.S)
     (H : Irmin.Hash.S)
     (Node : Irmin.Private.Node.S with type hash = H.t) =
 struct
