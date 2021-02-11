@@ -72,7 +72,7 @@ struct
   let clear_caches = P.clear_caches
 
   let save t v =
-    let add k v = P.unsafe_append ~ensure_unique:true ~overcommit:false t k v in
+    let add k v = P.unsafe_append ~ensure_unique:true ~overcommit:true t k v in
     Inter.Val.save ~add ~mem:(P.unsafe_mem t) v
 
   let add t v =
