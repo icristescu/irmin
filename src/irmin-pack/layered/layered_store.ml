@@ -39,6 +39,14 @@ module Copy
 struct
   let ignore_lwt _ = Lwt.return_unit
 
+  let with_timer str k f =
+    if str = "Contents" then
+    let c = Mtime_clock.counter () in
+    f ();
+    let elapsed = Mtime.Span.to_s ( Mtime_clock.count c) in
+      Log.app (fun l -> l "copy %s %a %f" str (Irmin.Type.pp Key.t) k elapsed);
+    else f ()
+
   let copy ~src ~dst str k =
     Log.debug (fun l -> l "copy %s %a" str (Irmin.Type.pp Key.t) k);
     match SRC.unsafe_find ~check_integrity:false src k with
@@ -48,7 +56,7 @@ struct
               (Irmin.Type.pp Key.t) k)
     | Some v ->
         stats str;
-        DST.unsafe_append ~ensure_unique:false ~overcommit:true dst k v
+        with_timer str k (fun () -> DST.unsafe_append ~ensure_unique:false ~overcommit:true dst k v)
 
   let check ~src ?(some = ignore_lwt) ?(none = ignore_lwt) k =
     SRC.find src k >>= function None -> none () | Some v -> some v
