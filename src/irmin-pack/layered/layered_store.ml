@@ -40,7 +40,7 @@ struct
   let ignore_lwt _ = Lwt.return_unit
 
   let with_timer str k f =
-    if str = "Contents" then
+    if str = "Node" then
     let c = Mtime_clock.counter () in
     f ();
     let elapsed = Mtime.Span.to_s ( Mtime_clock.count c) in
