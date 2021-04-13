@@ -2019,6 +2019,7 @@ let layered_suite (speed, x) =
     match x.layered_store with
     | None -> []
     | Some layered_store ->
+       (Lwt.async_exception_hook := fun exn -> raise exn);
         let (module S) = layered_store in
         let module T = Make (S) in
         let module TL = Layered_store.Make_Layered (S) in

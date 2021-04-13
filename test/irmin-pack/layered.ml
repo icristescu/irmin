@@ -569,7 +569,9 @@ module Test = struct
         Alcotest.fail "Readonly checks for an ongoing freeze";
       Lwt.return_unit
     in
-    let after () = Lwt.return_unit in
+    let after () = if not (Store.async_freeze ro_ctxt.index.repo) then
+                     Alcotest.fail "Readonly checks for an ongoing freeze";
+                   Lwt.return_unit in
     let* () =
       Store.Private_layer.freeze' ctxt.index.repo ~max_lower:[ block1 ]
         ~hook:(hook before after)
