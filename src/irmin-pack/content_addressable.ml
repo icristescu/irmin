@@ -96,6 +96,42 @@ struct
 
     type key = K.t
 
+    module Json = struct
+      let key_to_yojson : key -> Yojson.Safe.t =
+       fun key -> (Irmin.Type.to_json_string K.t) key |> Yojson.Safe.from_string
+
+      let key_of_yojson : Yojson.Safe.t -> (key, string) Result.result =
+       fun json ->
+        Yojson.Safe.to_string json |> Irmin.Type.of_json_string K.t |> function
+        | Ok k -> Ok k
+        | Error (`Msg e) -> Error e
+
+      let int63_to_yojson : int63 -> Yojson.Safe.t =
+       fun value ->
+        (Irmin.Type.to_json_string Int63.t) value |> Yojson.Safe.from_string
+
+      let int63_of_yojson : Yojson.Safe.t -> (int63, string) Result.result =
+       fun json ->
+        Yojson.Safe.to_string json |> Irmin.Type.of_json_string Int63.t
+        |> function
+        | Ok k -> Ok k
+        | Error (`Msg e) -> Error e
+
+      type op =
+        | Clear
+        | Flush
+        | Mem of key * bool
+        | Find of key * bool
+        | Ro_mem of key * bool
+        | Ro_find of key * bool
+        | Add of key * (int63 * int * char)
+      [@@deriving yojson]
+
+      let pp_op op =
+        let obj = op_to_yojson op in
+        Yojson.Safe.to_string obj
+    end
+
     let equal_key = Irmin.Type.(unstage (equal K.t))
 
     type value = Val.t
@@ -162,7 +198,17 @@ struct
 
     let unsafe_mem t k =
       Log.debug (fun l -> l "[pack] mem %a" pp_hash k);
-      Tbl.mem t.staging k || Lru.mem t.lru k || Index.mem t.pack.index k
+      let index_mem index k =
+        let v = Index.mem index k in
+        Log.info (fun l ->
+            let op =
+              (if t.readonly then Json.Ro_mem (k, v) else Json.Mem (k, v))
+              |> Json.pp_op
+            in
+            l "[index] %s" op);
+        v
+      in
+      Tbl.mem t.staging k || Lru.mem t.lru k || index_mem t.pack.index k
 
     let mem t k =
       let b = unsafe_mem t k in
@@ -202,8 +248,23 @@ struct
           | exception Not_found -> (
               Stats.incr_cache_misses ();
               match Index.find t.pack.index k with
-              | None -> None
+              | None ->
+                  Log.info (fun l ->
+                      let op =
+                        (if t.readonly then Json.Ro_find (k, false)
+                        else Json.Find (k, false))
+                        |> Json.pp_op
+                      in
+                      l "[index] %s" op);
+                  None
               | Some (off, len, _) ->
+                  Log.info (fun l ->
+                      let op =
+                        (if t.readonly then Json.Ro_find (k, true)
+                        else Json.Find (k, true))
+                        |> Json.pp_op
+                      in
+                      l "[index] %s" op);
                   let v = io_read_and_decode ~off ~len t in
                   (if check_integrity then
                    check_key k v |> function
@@ -244,9 +305,15 @@ struct
         let offset k =
           match Index.find t.pack.index k with
           | None ->
+              Log.info (fun l ->
+                  let op = Json.Find (k, false) |> Json.pp_op in
+                  l "[index] %s" op);
               Stats.incr_appended_hashes ();
               None
           | Some (off, _, _) ->
+              Log.info (fun l ->
+                  let op = Json.Find (k, true) |> Json.pp_op in
+                  l "[index] %s" op);
               Stats.incr_appended_offsets ();
               Some off
         in
@@ -255,6 +322,9 @@ struct
         Val.encode_bin ~offset ~dict v k (IO.append t.pack.block);
         let len = Int63.to_int (IO.offset t.pack.block -- off) in
         Index.add ~overcommit t.pack.index k (off, len, Val.magic v);
+        Log.info (fun l ->
+            let op = Json.Add (k, (off, len, Val.magic v)) |> Json.pp_op in
+            l "[index] %s" op);
         if Tbl.length t.staging >= auto_flush then flush t
         else Tbl.add t.staging k v;
         Lru.add t.lru k v)
@@ -281,6 +351,9 @@ struct
       Lwt.return_unit
 
     let clear t =
+      Log.info (fun l ->
+          let op = Json.Clear |> Json.pp_op in
+          l "[index] %s" op);
       unsafe_clear t;
       Lwt.return_unit
 
