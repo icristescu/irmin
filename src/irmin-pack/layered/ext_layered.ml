@@ -672,6 +672,7 @@ struct
              Graph.iter; there is no need to check this again when the object is
              copied *)
           let commit k =
+            Fmt.epr "visit commit %a\n%!" (Irmin.Type.pp H.t) k;
             with_cancel cancel @@ fun () ->
             X.Commit.CA.copy_from_lower ~dst:commits t.X.Repo.commit "Commit" k
           in
