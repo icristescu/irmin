@@ -18,6 +18,7 @@ open Lwt.Infix
 open Lwt.Syntax
 open Bench_common
 open Irmin_traces
+open Trace_common
 
 type config = {
   ncommits : int;
