@@ -32,3 +32,7 @@ depends: [
 ]
 
 synopsis: "Irmin backend which stores values in a pack file"
+
+pin-depends: [
+  [ "index.dev" "git+https://github.com/icristescu/index#91c6a9a4b036a7303f2348e9c0214447b2b9383d" ]
+]
