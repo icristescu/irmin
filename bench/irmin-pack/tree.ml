@@ -17,6 +17,7 @@
 open Bench_common
 open Irmin.Export_for_backends
 open Irmin_traces
+open Trace_common
 
 type config = {
   ncommits : int;

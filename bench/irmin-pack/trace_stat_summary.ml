@@ -43,6 +43,7 @@
     necessarily associated to a Tezos block. There are ~50 more commits than
     Tezos blocks up to the Edo protocol. *)
 
+open Trace_common
 module Def = Trace_definitions.Stat_trace
 module Conf = Trace_stat_summary_conf
 module Utils = Trace_stat_summary_utils
