@@ -29,7 +29,7 @@
  (preprocess
   (pps ppx_repr))
  (libraries irmin-pack irmin-pack.layered irmin-test.bench irmin-layers lwt
-   unix cmdliner logs memtrace repr ppx_repr bench_common tezos-context-hash
+   unix cmdliner logs repr ppx_repr bench_common tezos-context-hash
    irmin_traces))
 
 ;; Require the executables to compile during tests
