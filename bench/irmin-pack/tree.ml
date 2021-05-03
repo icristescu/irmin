@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *)
 
-open Lwt.Infix 
+open Lwt.Infix
 open Lwt.Syntax
 open Bench_common
 open Irmin_traces
@@ -547,7 +547,7 @@ end) =
 struct
   open Tezos_context_hash.Encoding
   module Store =
-    Irmin_pack.Make_ext (Conf) (Metadata) (Contents) (Path) (Branch) (Hash)
+    Irmin_pack.Make_ext (struct let io_version = `V1 end) (Conf) (Metadata) (Contents) (Path) (Branch) (Hash)
       (Node)
       (Commit)
 
