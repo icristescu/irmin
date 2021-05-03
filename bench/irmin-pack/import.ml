@@ -14,35 +14,4 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *)
 
-let config ~root = Irmin_pack.config ~fresh:false root
-
-module Config = struct
-  let entries = 2
-  let stable_hash = 3
-end
-
-module KV = Irmin_pack.KV (Config) (Irmin.Contents.String)
-module Bench = Irmin_bench.Make (KV)
-
-let file f =
-  (* in MiB *)
-  try (Unix.stat f).st_size / 1024 / 1024
-  with Unix.Unix_error (Unix.ENOENT, _, _) -> 0
-
-let index root =
-  let rec aux acc i =
-    if i = 256 then acc
-    else
-      let filename = Format.sprintf "store.index.%d" i in
-      let s = file (Filename.concat root filename) in
-      aux (acc + s) (i + 1)
-  in
-  aux 0 0
-
-let size ~root =
-  let index_size = index root in
-  Irmin_pack.Layout.stores ~root
-  |> List.map file
-  |> List.fold_left ( + ) index_size
-
-let () = Bench.run ~config ~size
+include Irmin.Export_for_backends
