@@ -1,4 +1,20 @@
-open Irmin.Export_for_backends
+(*
+ * Copyright (c) 2018-2021 Tarides <contact@tarides.com>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *)
+
+open Lwt.Syntax
 
 let reporter ?(prefix = "") () =
   let report src level ~over k msgf =
@@ -30,15 +46,18 @@ let reset_stats () =
   Irmin_pack.Stats.reset_stats ()
 
 let random_char () = char_of_int (Random.int 256)
+
 let random_string n = String.init n (fun _i -> random_char ())
+
 let random_blob () = random_string 10 |> Bytes.of_string
+
 let random_key () = random_string 5
 
-let default_results_dir =
+let default_artefacts_dir =
   let ( / ) = Filename.concat in
-  Unix.getcwd () / "_results" / Uuidm.to_string (Uuidm.v `V4)
+  Unix.getcwd () / "_artefacts" / Uuidm.to_string (Uuidm.v `V4)
 
-let prepare_results_dir path =
+let prepare_artefacts_dir path =
   let rec mkdir_p path =
     if Sys.file_exists path then ()
     else
@@ -70,6 +89,7 @@ let with_progress_bar ~message ~n ~unit =
 
 module Conf = struct
   let entries = 32
+
   let stable_hash = 256
 end
 
@@ -83,6 +103,7 @@ module FSHelper = struct
     try (Unix.stat f).st_size with Unix.Unix_error (Unix.ENOENT, _, _) -> 0
 
   let dict root = file (Irmin_pack.Layout.dict ~root) / 1024 / 1024
+
   let pack root = file (Irmin_pack.Layout.pack ~root) / 1024 / 1024
 
   let index root =
@@ -93,6 +114,7 @@ module FSHelper = struct
     (a + b + c) / 1024 / 1024
 
   let size root = dict root + pack root + index root
+
   let get_size root = size root
 
   let print_size_layers root =
@@ -109,7 +131,7 @@ module FSHelper = struct
       let cmd = Printf.sprintf "rm -rf %s" root in
       Logs.info (fun l -> l "exec: %s" cmd);
       let _ = Sys.command cmd in
-      ())
+      () )
 end
 
 module Generate_trees
