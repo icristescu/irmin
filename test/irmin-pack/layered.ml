@@ -582,6 +582,69 @@ module Test = struct
     Store.Repo.close ctxt.index.repo >>= fun () ->
     Store.Repo.close ro_ctxt.index.repo
 
+  let test_incomplete_batch_of_newies () =
+    let* ctxt = init () in
+    let* ctxt, block1 = commit_block1 ctxt in
+    let module P = Store.Private in
+    let commit_hash = ref None in
+    let start = Lwt_mutex.create () in
+    let pause = Lwt_mutex.create () in
+    let restart = Lwt_mutex.create () in
+    let decompose_commit repo =
+      Log.debug (fun l -> l "don't start commit until the freeze starts");
+      let* () = Lwt_mutex.lock start in
+      P.Repo.batch repo (fun b n c ->
+          let* k = P.Contents.add b "x" in
+          let k1 =
+            `Contents (P.Contents.Key.hash "x", Store.Metadata.default)
+          in
+          Log.debug (fun l -> l "pause commit to continue freeze");
+          let () = Lwt_mutex.unlock pause in
+          let* () = Lwt_mutex.lock restart in
+          let v = P.Node.Val.add P.Node.Val.empty "a" k1 in
+          let* k2 = P.Node.add n v in
+          let v = P.Commit.Val.v ~info ~node:k2 ~parents:[] in
+          let* _k3 = P.Commit.add c v in
+          commit_hash := Some k;
+          let () = Lwt_mutex.unlock start in
+          Lwt.return_unit)
+    in
+    let hook =
+      Hook.v (function
+        | `Before_Copy_Newies ->
+            Log.debug (fun l -> l "pause freeze to add newies");
+            let () = Lwt_mutex.unlock start in
+            let* () = Lwt_mutex.lock pause in
+            Lwt.return_unit
+        | _ -> Lwt.return_unit)
+    in
+    let* () = Lwt_mutex.lock start in
+    let* () = Lwt_mutex.lock pause in
+    let* () = Lwt_mutex.lock restart in
+    Log.debug (fun l -> l "launch commit in a separate thread");
+    Lwt.async (fun () -> decompose_commit ctxt.index.repo);
+    let* () =
+      Store.Private_layer.freeze' ctxt.index.repo ~max_lower:[ block1 ] ~hook
+    in
+    let* () = Store.Private_layer.wait_for_freeze ctxt.index.repo in
+    Log.debug (fun l -> l "freeze finished, restart commit");
+    let () = Lwt_mutex.unlock pause in
+    let () = Lwt_mutex.unlock restart in
+    Log.debug (fun l -> l "wait for commit to finish");
+    let* () = Lwt_mutex.lock start in
+    let () = Lwt_mutex.unlock start in
+    let* () = check_block1 ctxt.index.repo block1 in
+    match !commit_hash with
+    | None -> Alcotest.fail "check only done after hook callback"
+    | Some k ->
+        Log.debug (fun l ->
+            l
+              "the newies contents are lost since we only copy newies in \
+               batches of commit");
+        P.Contents.find (P.Repo.contents_t ctxt.index.repo) k >>= fun x ->
+        Alcotest.(check (option string)) "contents are lost" (Some "x") x;
+        Store.Repo.close ctxt.index.repo
+
   let tests =
     [
       Alcotest.test_case "Test simple freeze" `Quick (fun () ->
@@ -614,6 +677,8 @@ module Test = struct
           Lwt_main.run (test_self_contained ()));
       Alcotest.test_case "Test ro async freeze" `Quick (fun () ->
           Lwt_main.run (test_ro_checks_async_freeze ()));
+      Alcotest.test_case "Test incomplete batch of newies" `Quick (fun () ->
+          Lwt_main.run (test_incomplete_batch_of_newies ()));
     ]
 end
 
