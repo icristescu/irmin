@@ -90,6 +90,11 @@ module type S = sig
         with type run := root:string -> heads:string list option -> unit Lwt.t
   end
 
+  module Inspect_commit :
+    Subcommand
+      with type run := root:string -> commit:string option -> unit Lwt.t
+  (** Inspects a commit. *)
+
   val cli :
     ?terms:(unit Cmdliner.Term.t * Cmdliner.Term.info) list -> unit -> empty
   (** Run a [Cmdliner] binary containing tools for running offline checks.

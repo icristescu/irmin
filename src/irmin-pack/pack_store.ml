@@ -189,8 +189,13 @@ module Maker
               Stats.incr_cache_misses ();
               match Index.find t.pack.index k with
               | None -> None
-              | Some (off, len, _) ->
+              | Some (off, len, m) ->
                   let v = snd (io_read_and_decode ~off ~len t) in
+                  Format.printf
+                    "found %a at off %a len %d magic %a value = %a \n%!" pp_hash
+                    k Int63.pp off len Pack_value.Kind.pp m
+                    Irmin.Type.(pp Val.t)
+                    v;
                   (if check_integrity then
                    check_key k v |> function
                    | Ok () -> ()

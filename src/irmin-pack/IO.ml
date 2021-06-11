@@ -239,8 +239,9 @@ module Unix : S = struct
           | _ -> ());
           match actual_version with
           | `V1 ->
-              Log.debug (fun l -> l "[%s] file exists in V1" file);
               let offset = Raw.Offset.get raw in
+              Log.app (fun l ->
+                  l "[%s] file exists in V1, offset %a" file Int63.pp offset);
               v ~offset ~version:`V1 ~generation:Int63.zero raw
           | `V2 ->
               let { Raw.Header.offset; generation; _ } = Raw.Header.get raw in

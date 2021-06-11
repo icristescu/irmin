@@ -5,6 +5,9 @@ SYNOPSIS
        irmin-fsck COMMAND ...
 
 COMMANDS
+       inspect
+           Inspect a commit.
+
        integrity-check
            Check integrity of an existing store.
 

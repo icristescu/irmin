@@ -280,6 +280,48 @@ module Make (M : Maker) = struct
         (term_internal $ setup_log, info ~doc "integrity-check-inodes")
   end
 
+  module Inspect_commit = struct
+    let conf root = Conf.v ~readonly:true ~fresh:false root
+
+    let commit =
+      let open Cmdliner.Arg in
+      value
+      & opt (some string) None
+      & info [ "commit" ] ~doc:"The commit to traverse." ~docv:"COMMIT"
+
+    let run_versioned_store ~root ~commit (module Store : Versioned_store) =
+      let conf = conf root in
+      let* repo = Store.Repo.v conf in
+      let* hash =
+        match commit with
+        | None -> (
+            Store.Repo.heads repo >|= function
+            | [] -> failwith "no head or commit"
+            | hd :: _ -> hd)
+        | Some x -> (
+            match Repr.of_string Store.Hash.t x with
+            | Ok x -> Store.Commit.of_hash repo x >|= Option.get
+            | _ -> failwith "invalid hash for commit")
+      in
+      let* () = Store.inspect_commit hash repo in
+      Store.Repo.close repo
+
+    let run ~root ~commit =
+      match Stat.detect_version ~root with
+      | `V1 -> run_versioned_store ~root ~commit (module Store_V1)
+      | `V2 -> run_versioned_store ~root ~commit (module Store_V2)
+
+    let term_internal =
+      Cmdliner.Term.(
+        const (fun root commit () -> Lwt_main.run (run ~root ~commit))
+        $ path
+        $ commit)
+
+    let term =
+      let doc = "Inspect a commit." in
+      Cmdliner.Term.(term_internal $ setup_log, info ~doc "inspect")
+  end
+
   module Cli = struct
     open Cmdliner
 
@@ -290,6 +332,7 @@ module Make (M : Maker) = struct
             Reconstruct_index.term;
             Integrity_check.term;
             Integrity_check_inodes.term;
+            Inspect_commit.term;
           ]) () : empty =
       let default =
         let default_info =

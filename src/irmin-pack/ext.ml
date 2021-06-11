@@ -183,6 +183,10 @@ struct
 
     include Irmin.Of_private (X)
 
+    let inspect_commit c t =
+      let hash = [ `Commit (Commit.hash c) ] in
+      Repo.iter ~cache_size:1_000_000 ~min:hash ~max:hash t
+
     let integrity_check_inodes ?heads t =
       Log.debug (fun l -> l "Check integrity for inodes");
       let bar, (_, progress_nodes, progress_commits) =
