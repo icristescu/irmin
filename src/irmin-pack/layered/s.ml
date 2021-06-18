@@ -119,6 +119,7 @@ module type Content_addressable = sig
     key ->
     unit Lwt.t
 
+  val find_with_lower : 'a t -> key -> value option Lwt.t
   val mem_lower : 'a t -> key -> bool Lwt.t
   val mem_next : [> read ] t -> key -> bool Lwt.t
   val current_upper : 'a t -> read U.t

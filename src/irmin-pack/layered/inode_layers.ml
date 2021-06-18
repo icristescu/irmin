@@ -47,6 +47,14 @@ struct
         let v = Val.of_raw find v in
         Some v
 
+  let find_with_lower t k =
+    P.find_with_lower t k >|= function
+    | None -> None
+    | Some v ->
+        let find = unsafe_find ~check_integrity:true t in
+        let v = Val.of_raw find v in
+        Some v
+
   let hash v = Val.hash v
   let equal_hash = Irmin.Type.(unstage (equal H.t))
 

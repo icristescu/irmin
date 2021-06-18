@@ -502,6 +502,37 @@ struct
             (function `Inode x -> `Node x | (`Node _ | `Contents _) as x -> x)
             (X.Node.CA.Val.pred v)
 
+    let pred_node_with_lower t k =
+      let n = snd (X.Repo.node_t t) in
+      X.Node.CA.find_with_lower n k >|= function
+      | None -> []
+      | Some v ->
+          List.rev_map
+            (function `Inode x -> `Node x | (`Node _ | `Contents _) as x -> x)
+            (X.Node.CA.Val.pred v)
+
+    let pred_commit t k =
+      let c = snd (X.Repo.commit_t t) in
+      X.Commit.CA.find c k >|= function
+      | None ->
+          Log.debug (fun l -> l "%a: not found" (Irmin.Type.pp Hash.t) k);
+          []
+      | Some k ->
+          let node = X.Commit.Val.node k in
+          let parents = X.Commit.Val.parents k in
+          [ `Node node ] @ List.map (fun k -> `Commit k) parents
+
+    let pred_commit_with_lower t k =
+      let c = snd (X.Repo.commit_t t) in
+      X.Commit.CA.find_with_lower c k >|= function
+      | None ->
+          Log.debug (fun l -> l "%a: not found" (Irmin.Type.pp Hash.t) k);
+          []
+      | Some k ->
+          let node = X.Commit.Val.node k in
+          let parents = X.Commit.Val.parents k in
+          [ `Node node ] @ List.map (fun k -> `Commit k) parents
+
     let always_false _ = false
     let with_cancel cancel f = if cancel () then Lwt.fail Cancelled else f ()
 
@@ -534,7 +565,7 @@ struct
       let skip_commit h = skip_with_stats ~skip:skip_commits h in
       let+ () =
         Repo.iter ~cache_size ~min ~max ~commit ~node ~contents ~skip_node
-          ~skip_contents ~pred_node ~skip_commit t
+          ~skip_contents ~pred_node ~skip_commit ~pred_commit t
       in
       X.Repo.flush t
 
@@ -643,7 +674,8 @@ struct
         let min = List.map (fun c -> `Commit c) min in
         let+ () =
           Repo.iter ~cache_size ~min ~max ~commit ~node ~contents ~skip_node
-            ~skip_contents ~pred_node ~skip_commit t
+            ~skip_contents ~pred_node:pred_node_with_lower ~skip_commit
+            ~pred_commit:pred_commit_with_lower t
         in
         X.Repo.flush t
 
@@ -656,11 +688,10 @@ struct
       (** An object can be in either lower or upper or both. We can't skip an
           object already in upper as some predecessors could still be in lower. *)
       let self_contained ?min ~max t =
-        let max = List.map (fun x -> Commit.hash x) max in
         let min =
           match min with
           | None -> max (* if min is empty then copy only the max commits *)
-          | Some min -> List.map (fun x -> Commit.hash x) min
+          | Some min -> min
         in
         (* FIXME(samoht): do this in 2 steps: 1/ find the shallow
            hashes in upper 2/ iterates with max=shallow
@@ -826,7 +857,9 @@ struct
     in
     let node k = X.Node.CA.check t.X.Repo.node ~none k in
     let contents k = X.Contents.CA.check t.X.Repo.contents ~none k in
-    let commit k = X.Commit.CA.check t.X.Repo.commit ~none k in
+    (* Do not check for missing commits - as the upper commits can have
+       parents in lower. *)
+    let commit k = X.Commit.CA.check t.X.Repo.commit k in
     let* heads =
       match heads with None -> Repo.heads t | Some m -> Lwt.return m
     in

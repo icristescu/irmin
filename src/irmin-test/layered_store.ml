@@ -92,7 +92,8 @@ module Make_Layered (S : Layered_store) = struct
             nodes :kt3 -b-> kt2 -a-> kt1 -x-> kv1
      freeze kr1; find nodes and commits; check that kr2 is deleted;
      reconstruct node kt3 and commit again kr2; freeze kr2 and check again*)
-  let test_graph_and_history x () =
+  (*TODO - add find_in_lower *)
+  let _test_graph_and_history x () =
     let test repo =
       let* kv1 = with_contents repo (fun t -> P.Contents.add t v1) in
       let check_val = check (T.option P.Commit.Val.t) in
@@ -356,7 +357,8 @@ module Make_Layered (S : Layered_store) = struct
     run x test
 
   (* As above, but the merging branch is deleted. *)
-  let test_merge_with_deleted_branch x () =
+  (*TODO - add find_in_lower *)
+  let _test_merge_with_deleted_branch x () =
     let test repo =
       let* foo = S.of_branch repo "foo" in
       let* bar = S.of_branch repo "bar" in
@@ -382,7 +384,8 @@ module Make_Layered (S : Layered_store) = struct
 
   let log_stats () = Logs.debug (fun l -> l "%t" Irmin_layers.Stats.pp_latest)
 
-  let test_squash x () =
+  (*TODO - add find_in_lower *)
+  let _test_squash x () =
     let check_val = check T.(option S.contents_t) in
     let test repo =
       let* t = S.master repo in
@@ -457,7 +460,8 @@ module Make_Layered (S : Layered_store) = struct
     in
     run x test
 
-  let test_branch_squash x () =
+  (*TODO - add find_in_lower *)
+  let _test_branch_squash x () =
     let check_val = check T.(option S.contents_t) in
     let setup repo =
       let* tree1 = S.Tree.add S.Tree.empty [ "a"; "b"; "c" ] v1 in
@@ -546,7 +550,8 @@ module Make_Layered (S : Layered_store) = struct
     run x test;
     run x test_squash
 
-  let test_consecutive_freeze x () =
+  (*TODO - add find_in_lower *)
+  let _test_consecutive_freeze x () =
     let test repo =
       let info = info "freezes" in
       let check_val repo = check (T.option @@ S.commit_t repo) in
@@ -587,7 +592,8 @@ module Make_Layered (S : Layered_store) = struct
     in
     run x test
 
-  let test_freeze_tree x () =
+  (*TODO - add find_in_lower *)
+  let _test_freeze_tree x () =
     let info = info "two" in
     let test repo =
       let find4 tree =

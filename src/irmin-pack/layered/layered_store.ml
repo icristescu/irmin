@@ -132,6 +132,11 @@ struct
   let find t k =
     let current = current_upper t in
     Log.debug (fun l -> l "find in %a" pp_current_upper t);
+    U.find current k
+
+  let find_with_lower t k =
+    let current = current_upper t in
+    Log.debug (fun l -> l "find in %a" pp_current_upper t);
     U.find current k >>= function
     | Some v -> Lwt.return_some v
     | None -> (
@@ -144,6 +149,8 @@ struct
   let unsafe_find ~check_integrity t k =
     let current = current_upper t in
     Log.debug (fun l -> l "unsafe_find in %a" pp_current_upper t);
+    U.unsafe_find ~check_integrity current k
+  (*
     match U.unsafe_find ~check_integrity current k with
     | Some v -> Some v
     | None -> (
@@ -151,21 +158,22 @@ struct
         | None -> None
         | Some lower ->
             Log.debug (fun l -> l "unsafe_find in lower");
-            L.unsafe_find ~check_integrity lower k)
+            L.unsafe_find ~check_integrity lower k)*)
 
   let mem t k =
     let current = current_upper t in
-    U.mem current k >>= function
+    U.mem current k
+  (*U.mem current k >>= function
     | true -> Lwt.return_true
     | false -> (
         match t.lower with
         | None -> Lwt.return_false
-        | Some lower -> L.mem lower k)
+        | Some lower -> L.mem lower k)*)
 
   let unsafe_mem t k =
     let current = current_upper t in
     U.unsafe_mem current k
-    || match t.lower with None -> false | Some lower -> L.unsafe_mem lower k
+  (* || match t.lower with None -> false | Some lower -> L.unsafe_mem lower k *)
 
   (** Only flush current upper, to prevent concurrent flushing and appends
       during copy. Next upper and lower are flushed at the end of a freeze. *)

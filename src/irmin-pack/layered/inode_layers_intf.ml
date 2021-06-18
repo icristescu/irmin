@@ -70,6 +70,8 @@ module type S = sig
     ?some:(U.value -> unit Lwt.t) ->
     key ->
     unit Lwt.t
+
+  val find_with_lower : 'a t -> key -> value option Lwt.t
 end
 
 module Index = Irmin_pack.Index

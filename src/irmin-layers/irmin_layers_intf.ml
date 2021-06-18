@@ -77,7 +77,7 @@ module type S = sig
       helpful when a single freeze is called, to check whether it completed or
       not. *)
 
-  val self_contained : ?min:commit list -> max:commit list -> repo -> unit Lwt.t
+  val self_contained : ?min:hash list -> max:hash list -> repo -> unit Lwt.t
   (** [self_contained min max t] copies the commits in the range of [min, max]
       from lower into upper, in order to make the upper self contained. If [min]
       is missing then only the [max] commits are copied. *)
