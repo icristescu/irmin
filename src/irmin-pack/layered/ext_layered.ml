@@ -536,6 +536,18 @@ struct
     let always_false _ = false
     let with_cancel cancel f = if cancel () then Lwt.fail Cancelled else f ()
 
+    let auto_yield =
+      let c = ref (Mtime_clock.counter ()) in
+      fun () ->
+        let elapsed = Mtime.Span.to_s (Mtime_clock.count !c) in
+        if elapsed > 0.5 then (
+          c := Mtime_clock.counter ();
+          Irmin_layers.Stats.freeze_yield ();
+          let* () = Lwt.pause () in
+          Irmin_layers.Stats.freeze_yield_end ();
+          Lwt.return_unit)
+        else Lwt.return_unit
+
     let iter_copy (contents, nodes, commits) ?(skip_commits = no_skip)
         ?(cancel = always_false) ?(skip_nodes = no_skip)
         ?(skip_contents = no_skip) t ?(min = []) max =
@@ -545,19 +557,19 @@ struct
       let commit k =
         with_cancel cancel @@ fun () ->
         X.Commit.CA.copy commits t.X.Repo.commit "Commit" k;
-        Irmin_layers.Stats.freeze_yield ();
-        let* () = Lwt.pause () in
-        Irmin_layers.Stats.freeze_yield_end ();
+        let* () = auto_yield () in
         Lwt.return_unit
       in
       let node k =
         with_cancel cancel @@ fun () ->
         X.Node.CA.copy nodes t.X.Repo.node k;
+        let* () = auto_yield () in
         Lwt.return_unit
       in
       let contents k =
         with_cancel cancel @@ fun () ->
         X.Contents.CA.copy contents t.X.Repo.contents "Contents" k;
+        let* () = auto_yield () in
         Lwt.return_unit
       in
       let skip_node h = skip_with_stats ~skip:skip_nodes h in
