@@ -3,7 +3,7 @@
  (public_name irmin_fsck)
  (package irmin-pack)
  (modules irmin_fsck)
- (libraries irmin-pack irmin-pack.layered))
+ (libraries irmin-pack.layered tezos-context-hash-irmin))
 
 (executable
  (name generate)

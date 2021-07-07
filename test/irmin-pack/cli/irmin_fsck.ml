@@ -36,6 +36,17 @@ end
 
 module Store = Irmin_pack.Checks.Make (Maker)
 
+module TzMaker (V : Irmin_pack.Version.S) = struct
+  open Tezos_context_hash_irmin.Encoding
+
+  module Maker =
+    Irmin_pack.Maker_ext (Irmin_pack.Version.V1) (Conf) (Node) (Commit)
+
+  include Maker.Make (Metadata) (Contents) (Path) (Branch) (Hash)
+end
+
+module TzStore = Irmin_pack.Checks.Make (TzMaker)
+
 module S =
   Irmin_pack_layered.Maker_ext (Conf) (Node) (Commit) (Irmin.Metadata.None)
     (Irmin.Contents.String)
@@ -48,4 +59,5 @@ module Store_layered = Irmin_pack_layered.Checks.Make (Maker) (S)
 let () =
   match Sys.getenv_opt "PACK_LAYERED" with
   | Some "true" -> ( match Store_layered.cli () with _ -> .)
+  | Some "tezos" -> ( match TzStore.cli () with _ -> .)
   | _ -> ( match Store.cli () with _ -> .)
